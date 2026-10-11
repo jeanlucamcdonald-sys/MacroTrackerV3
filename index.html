@@ -1,0 +1,387 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>MacroTracker V3</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/html5-qrcode"></script>
+    <style>
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+        
+        input[type=number]::-webkit-outer-spin-button,
+        input[type=number]::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+        input[type=number] { -moz-appearance: textfield; appearance: textfield; }
+    </style>
+</head>
+
+<body class="bg-slate-950 text-slate-100 h-screen flex flex-col font-sans overflow-hidden antialiased">
+
+    <!-- FLOATING TOP NAV -->
+    <nav class="absolute top-0 w-full p-6 flex justify-between items-center z-40">
+        <div class="w-8"></div>
+        <button id="btn-menu" class="p-2 text-slate-400 hover:text-white transition bg-slate-900/50 rounded-full backdrop-blur-md active:scale-95">
+            <svg class="w-6 h-6 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"></path></svg>
+        </button>
+    </nav>
+
+    <!-- MAIN SCROLLABLE AREA -->
+    <main class="flex-1 overflow-y-auto no-scrollbar w-full z-10 relative pb-48">
+        
+        <!-- View 1: Home / Landing -->
+        <section id="view-home" class="app-view block max-w-2xl mx-auto w-full px-6 pt-[15vh] relative z-10">
+            
+            <div class="text-center mb-8 relative">
+                <h1 class="text-4xl md:text-5xl font-semibold tracking-tight text-white mb-3">Good evening, Jean-Luc.</h1>
+                <p class="text-lg text-slate-400">What's fueling your training tonight?</p>
+            </div>
+
+            <!-- Central Search Engine -->
+            <div class="relative z-30 max-w-md mx-auto mb-8 w-full group">
+                <div class="relative shadow-xl rounded-3xl transition-all duration-300 ease-out focus-within:scale-[1.03] focus-within:shadow-[0_0_30px_-10px_rgba(59,130,246,0.25)] bg-slate-900/90 backdrop-blur-lg border border-white/[0.05] focus-within:border-blue-500/50">
+                    <svg class="absolute left-5 top-1/2 -translate-y-1/2 w-6 h-6 text-slate-400 group-focus-within:text-blue-400 transition-colors pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
+                    <input type="text" id="food-search-input" placeholder="Log food, barcode, or recipe..." class="w-full bg-transparent py-4 pl-14 pr-16 text-base text-white placeholder-slate-400 focus:outline-none transition">
+                    
+                    <button id="btn-scan-barcode" title="Scan Barcode" class="absolute right-3 top-1/2 -translate-y-1/2 p-2 text-slate-400 hover:text-white transition bg-slate-800 hover:bg-slate-700 rounded-full z-10 active:scale-95">
+                        <svg class="w-5 h-5 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 8V5a2 2 0 012-2h3m8 0h3a2 2 0 012 2v3m0 8v3a2 2 0 01-2 2h-3m-8 0H5a2 2 0 01-2-2v-3M7 12h10"></path>
+                        </svg>
+                    </button>
+                </div>
+                
+                <div id="search-dropdown" class="absolute w-full mt-3 bg-slate-800/95 backdrop-blur-xl border border-white/[0.05] rounded-2xl shadow-2xl overflow-y-auto no-scrollbar hidden max-h-60 z-40 transform origin-top transition-all">
+                    <div id="dropdown-results" class="flex flex-col py-2"></div>
+                </div>
+            </div>
+
+            <!-- Quick-Add Pinned Recipe Pills -->
+            <div class="flex flex-wrap justify-center gap-3 mb-16 relative z-10 transition-opacity duration-300" id="predictive-pills"></div>
+
+            <!-- Visuals & Logs -->
+            <div class="space-y-8 mt-12 border-t border-slate-800/50 pt-12 relative z-10">
+                <h2 class="text-xl font-semibold text-white">Daily Brief</h2>
+                <div id="macro-dashboard" class="w-full bg-slate-900 rounded-3xl border border-white/[0.05] p-6 shadow-inner"></div>
+                <div>
+                    <h3 class="text-xs font-bold text-slate-500 uppercase tracking-widest mb-4">Chronological Log</h3>
+                    <div id="daily-log-container" class="space-y-3"></div>
+                </div>
+            </div>
+
+        </section> 
+        
+        <!-- View 2: Database Manager -->
+        <section id="view-database" class="app-view hidden max-w-2xl mx-auto px-6 pt-24 pb-32">
+            <div class="flex justify-between items-center mb-6">
+                <div>
+                    <h2 class="text-2xl font-bold text-white">Database</h2>
+                    <p class="text-xs text-slate-400 mt-1">Manage single foods, staple meal groups, and recipes.</p>
+                </div>
+                <button id="btn-open-add-food" class="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs rounded-xl transition shadow-lg shadow-blue-900/20 active:scale-[0.97]">
+                    + Add New
+                </button>
+            </div>
+
+            <!-- Database Segment Toggle -->
+            <div class="flex p-1 bg-slate-900 rounded-2xl border border-white/[0.05] mb-4" id="db-category-tabs">
+                <button type="button" data-filter="all" class="db-tab-btn flex-1 py-2 text-xs font-bold rounded-xl bg-slate-800 text-white transition">All Items</button>
+                <button type="button" data-filter="foods" class="db-tab-btn flex-1 py-2 text-xs font-bold rounded-xl text-slate-400 hover:text-white transition">Foods</button>
+                <button type="button" data-filter="recipes" class="db-tab-btn flex-1 py-2 text-xs font-bold rounded-xl text-slate-400 hover:text-white transition">Meals (Groups)</button>
+            </div>
+
+            <!-- Database Search Filter -->
+            <div class="relative mb-6">
+                <svg class="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-500 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
+                <input type="text" id="db-filter-input" placeholder="Filter saved items..." class="w-full bg-slate-900 border border-white/[0.05] rounded-2xl py-3 pl-12 pr-4 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 transition">
+            </div>
+
+            <div id="database-list-container" class="space-y-3"></div>
+        </section>
+        
+        <div class="fixed bottom-0 left-0 w-full h-32 bg-gradient-to-t from-slate-950 via-slate-950/80 to-transparent pointer-events-none z-20"></div>
+
+    </main>
+
+    <!-- BARCODE SCANNER MODAL -->
+    <div id="scanner-modal" class="fixed inset-0 z-[60] flex flex-col hidden bg-slate-950 transition-opacity duration-300">
+        <div class="flex justify-between items-center px-6 pt-12 pb-4 bg-slate-900 border-b border-slate-800">
+            <h3 class="text-white font-bold tracking-wide">Scan Barcode</h3>
+            <button id="btn-close-scanner" class="text-slate-400 hover:text-white bg-slate-800 p-2 rounded-full transition active:scale-95">
+                <svg class="w-5 h-5 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+            </button>
+        </div>
+        <div class="flex-1 relative bg-black flex items-center justify-center overflow-hidden">
+            <div id="reader" class="w-full max-w-md"></div>
+        </div>
+        <div class="p-8 bg-slate-900 text-center border-t border-slate-800 pb-12">
+            <p id="scanner-status" class="text-sm text-slate-400 font-medium tracking-wide">Position barcode in the center frame.</p>
+        </div>
+    </div>
+
+    <!-- CUSTOM FOOD & RECIPE MODAL -->
+    <div id="custom-food-modal" class="fixed inset-0 z-50 flex items-center justify-center pointer-events-none transition-opacity duration-300 opacity-0 hidden">
+        <div id="custom-food-backdrop" class="absolute inset-0 bg-slate-950/60 backdrop-blur-md pointer-events-auto"></div>
+        <div class="relative w-full max-w-lg mx-4 bg-slate-900 border border-white/[0.05] rounded-3xl p-6 shadow-2xl pointer-events-auto max-h-[90vh] overflow-y-auto no-scrollbar flex flex-col">
+            <div class="w-10 h-1.5 bg-slate-700 rounded-full mx-auto mb-2 shrink-0"></div>
+            
+            <div class="flex justify-between items-center mb-4">
+                <h3 id="custom-modal-title" class="text-lg font-bold text-white">Create New Item</h3>
+                <button id="btn-close-custom-modal" type="button" class="p-2 text-slate-400 hover:text-white bg-slate-800 rounded-full transition active:scale-95">
+                    <svg class="w-4 h-4 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                </button>
+            </div>
+
+            <!-- Tab Switcher -->
+            <div class="flex p-1 bg-slate-950 rounded-2xl border border-white/[0.05] mb-5" id="custom-type-tabs">
+                <button type="button" id="tab-mode-food" class="flex-1 py-2 text-xs font-bold rounded-xl bg-blue-600 text-white transition">Single Food</button>
+                <button type="button" id="tab-mode-recipe" class="flex-1 py-2 text-xs font-bold rounded-xl text-slate-400 hover:text-white transition">Meal / Recipe Group</button>
+            </div>
+
+            <!-- Single Food Form -->
+            <form id="custom-food-form" class="space-y-4">
+                <input type="hidden" id="custom-food-id">
+
+                <div>
+                    <label class="text-[10px] font-bold text-slate-400 uppercase tracking-wider pl-1">Food Name</label>
+                    <input type="text" id="custom-food-name" required placeholder="e.g. Oatmeal Bowl" class="w-full bg-slate-950 border border-white/[0.05] rounded-2xl py-3 px-4 text-sm text-white focus:outline-none focus:border-blue-500 transition mt-1">
+                </div>
+
+                <div class="grid grid-cols-2 gap-3">
+                    <div>
+                        <label class="text-[10px] font-bold text-slate-400 uppercase tracking-wider pl-1">Base Serving</label>
+                        <input type="number" step="any" id="custom-food-serving" required value="100" class="w-full bg-slate-950 border border-white/[0.05] rounded-2xl py-3 px-4 text-sm text-white focus:outline-none focus:border-blue-500 transition mt-1">
+                    </div>
+                    
+                    <div class="relative">
+                        <label class="text-[10px] font-bold text-slate-400 uppercase tracking-wider pl-1">Unit</label>
+                        <input type="hidden" id="custom-food-unit" value="g">
+                        <button type="button" id="btn-custom-unit-trigger" class="w-full bg-slate-950 border border-white/[0.05] rounded-2xl py-3 px-4 text-sm text-left text-white focus:outline-none focus:border-blue-500 transition mt-1 flex justify-between items-center">
+                            <span id="selected-unit-label">grams (g)</span>
+                            <svg class="w-4 h-4 text-slate-400 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
+                        </button>
+                        
+                        <div id="custom-unit-dropdown" class="absolute left-0 right-0 top-full mt-2 bg-slate-800/95 backdrop-blur-xl border border-white/[0.05] rounded-2xl shadow-2xl max-h-48 overflow-y-auto no-scrollbar z-30 hidden py-1">
+                            <div class="px-3 py-1 text-[10px] font-bold uppercase tracking-wider text-slate-500">Weight</div>
+                            <button type="button" data-val="g" data-label="grams (g)" class="unit-opt w-full text-left px-4 py-2 text-xs text-slate-200 hover:bg-slate-700/60 transition">grams (g)</button>
+                            <button type="button" data-val="oz" data-label="ounces (oz)" class="unit-opt w-full text-left px-4 py-2 text-xs text-slate-200 hover:bg-slate-700/60 transition">ounces (oz)</button>
+                            <button type="button" data-val="lb" data-label="pounds (lb)" class="unit-opt w-full text-left px-4 py-2 text-xs text-slate-200 hover:bg-slate-700/60 transition">pounds (lb)</button>
+                            <div class="px-3 py-1 text-[10px] font-bold uppercase tracking-wider text-slate-500 border-t border-slate-700/50 mt-1">Volume</div>
+                            <button type="button" data-val="ml" data-label="milliliters (ml)" class="unit-opt w-full text-left px-4 py-2 text-xs text-slate-200 hover:bg-slate-700/60 transition">milliliters (ml)</button>
+                            <button type="button" data-val="fl oz" data-label="fluid ounces (fl oz)" class="unit-opt w-full text-left px-4 py-2 text-xs text-slate-200 hover:bg-slate-700/60 transition">fluid ounces (fl oz)</button>
+                            <button type="button" data-val="cup" data-label="cups" class="unit-opt w-full text-left px-4 py-2 text-xs text-slate-200 hover:bg-slate-700/60 transition">cups</button>
+                            <button type="button" data-val="tbsp" data-label="tablespoons (tbsp)" class="unit-opt w-full text-left px-4 py-2 text-xs text-slate-200 hover:bg-slate-700/60 transition">tablespoons (tbsp)</button>
+                            <button type="button" data-val="tsp" data-label="teaspoons (tsp)" class="unit-opt w-full text-left px-4 py-2 text-xs text-slate-200 hover:bg-slate-700/60 transition">teaspoons (tsp)</button>
+                            <div class="px-3 py-1 text-[10px] font-bold uppercase tracking-wider text-slate-500 border-t border-slate-700/50 mt-1">Portion</div>
+                            <button type="button" data-val="serving" data-label="serving" class="unit-opt w-full text-left px-4 py-2 text-xs text-slate-200 hover:bg-slate-700/60 transition">serving</button>
+                            <button type="button" data-val="piece" data-label="piece / item" class="unit-opt w-full text-left px-4 py-2 text-xs text-slate-200 hover:bg-slate-700/60 transition">piece / item</button>
+                            <button type="button" data-val="slice" data-label="slice" class="unit-opt w-full text-left px-4 py-2 text-xs text-slate-200 hover:bg-slate-700/60 transition">slice</button>
+                            <button type="button" data-val="scoop" data-label="scoop" class="unit-opt w-full text-left px-4 py-2 text-xs text-slate-200 hover:bg-slate-700/60 transition">scoop</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-4 gap-2 pt-2">
+                    <div>
+                        <label class="text-[10px] font-bold text-slate-400 uppercase tracking-wider pl-1">Calories</label>
+                        <input type="number" id="custom-food-cal" required value="0" class="w-full bg-slate-950 border border-white/[0.05] rounded-2xl py-3 text-center text-sm font-bold text-white focus:outline-none focus:border-blue-500 transition mt-1">
+                    </div>
+                    <div>
+                        <label class="text-[10px] font-bold text-blue-400 uppercase tracking-wider pl-1">Pro (g)</label>
+                        <input type="number" step="0.1" id="custom-food-p" required value="0" class="w-full bg-slate-950 border border-white/[0.05] rounded-2xl py-3 text-center text-sm font-bold text-blue-400 focus:outline-none focus:border-blue-500 transition mt-1">
+                    </div>
+                    <div>
+                        <label class="text-[10px] font-bold text-emerald-400 uppercase tracking-wider pl-1">Carb (g)</label>
+                        <input type="number" step="0.1" id="custom-food-c" required value="0" class="w-full bg-slate-950 border border-white/[0.05] rounded-2xl py-3 text-center text-sm font-bold text-emerald-400 focus:outline-none focus:border-blue-500 transition mt-1">
+                    </div>
+                    <div>
+                        <label class="text-[10px] font-bold text-rose-400 uppercase tracking-wider pl-1">Fat (g)</label>
+                        <input type="number" step="0.1" id="custom-food-f" required value="0" class="w-full bg-slate-950 border border-white/[0.05] rounded-2xl py-3 text-center text-sm font-bold text-rose-400 focus:outline-none focus:border-blue-500 transition mt-1">
+                    </div>
+                </div>
+
+                <div class="pt-4 flex gap-3">
+                    <button type="button" id="btn-cancel-custom-food" class="w-1/3 py-3.5 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-sm rounded-2xl transition active:scale-[0.97]">Cancel</button>
+                    <button type="submit" class="w-2/3 py-3.5 bg-blue-600 hover:bg-blue-500 text-white font-bold text-sm rounded-2xl transition shadow-lg shadow-blue-900/20 active:scale-[0.97]">Save Food</button>
+                </div>
+            </form>
+
+            <!-- Recipe Form -->
+            <div id="custom-recipe-form-container" class="hidden space-y-4">
+                <input type="hidden" id="custom-recipe-id">
+                <div>
+                    <label class="text-[10px] font-bold text-slate-400 uppercase tracking-wider pl-1">Meal / Recipe Name</label>
+                    <input type="text" id="custom-recipe-name" placeholder="e.g. Pre-Workout Shake" class="w-full bg-slate-950 border border-white/[0.05] rounded-2xl py-3 px-4 text-sm text-white focus:outline-none focus:border-blue-500 transition mt-1">
+                </div>
+
+                <div class="relative">
+                    <label class="text-[10px] font-bold text-slate-400 uppercase tracking-wider pl-1">Add Ingredients from Database</label>
+                    <input type="hidden" id="recipe-selected-food-id">
+                    <div class="flex gap-2 mt-1">
+                        <button type="button" id="btn-recipe-food-trigger" class="flex-1 bg-slate-950 border border-white/[0.05] rounded-2xl py-2.5 px-3.5 text-xs text-left text-white focus:outline-none focus:border-blue-500 flex justify-between items-center">
+                            <span id="selected-recipe-food-label" class="truncate text-slate-400">Choose ingredient...</span>
+                            <svg class="w-4 h-4 text-slate-400 pointer-events-none ml-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
+                        </button>
+                        <button type="button" id="btn-add-ing-to-recipe" class="px-4 py-2.5 bg-slate-800 hover:bg-slate-700 text-xs font-bold rounded-2xl text-white transition active:scale-[0.97]">+ Add</button>
+                    </div>
+
+                    <div id="recipe-food-dropdown" class="absolute left-0 right-14 top-full mt-2 bg-slate-800/95 backdrop-blur-xl border border-white/[0.05] rounded-2xl shadow-2xl max-h-48 overflow-y-auto no-scrollbar z-30 hidden py-1">
+                        <div id="recipe-food-dropdown-list"></div>
+                    </div>
+                </div>
+
+                <div class="space-y-2 pt-2">
+                    <label class="text-[10px] font-bold text-slate-500 uppercase tracking-wider pl-1">Selected Ingredients</label>
+                    <div id="recipe-builder-ingredients" class="space-y-2 max-h-48 overflow-y-auto no-scrollbar"></div>
+                </div>
+
+                <div class="p-3 bg-slate-950/80 rounded-2xl border border-white/[0.05] flex justify-between items-center text-xs">
+                    <span class="font-bold text-slate-400">Total Calculated:</span>
+                    <span id="recipe-builder-total-display" class="font-bold text-white">0 kcal • 0P 0C 0F</span>
+                </div>
+
+                <div class="pt-2 flex gap-3">
+                    <button type="button" id="btn-cancel-custom-recipe" class="w-1/3 py-3.5 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-sm rounded-2xl transition active:scale-[0.97]">Cancel</button>
+                    <button type="button" id="btn-save-custom-recipe" class="w-2/3 py-3.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-sm rounded-2xl transition shadow-lg shadow-emerald-900/20 active:scale-[0.97]">Save Recipe</button>
+                </div>
+            </div>
+
+        </div>
+    </div>
+
+    <!-- MEAL GROUP / RECIPE TUNING MODAL -->
+    <div id="recipe-modal" class="fixed inset-0 z-50 flex items-end justify-center pointer-events-none transition-opacity duration-300 opacity-0 hidden">
+        <div id="recipe-backdrop" class="absolute inset-0 bg-slate-950/60 backdrop-blur-md pointer-events-auto"></div>
+        <div id="recipe-modal-content" class="relative w-full max-w-2xl bg-slate-900 border-t border-white/[0.05] rounded-t-3xl p-6 pb-12 pointer-events-auto transform translate-y-full transition-transform duration-300 ease-out max-h-[88vh] flex flex-col shadow-2xl">
+            <div class="w-10 h-1.5 bg-slate-700 rounded-full mx-auto mb-2 shrink-0"></div>
+
+            <div class="flex justify-between items-start mb-4 flex-shrink-0">
+                <div>
+                    <h3 id="recipe-modal-name" class="text-xl font-bold text-white">Staple Meal</h3>
+                    <p class="text-xs text-slate-400">Tweak ingredients or portions before logging.</p>
+                </div>
+                <div class="text-right">
+                    <div id="recipe-total-cal" class="text-xl font-bold text-white">0 kcal</div>
+                    <div id="recipe-total-macros" class="text-xs font-semibold text-slate-400">0P • 0C • 0F</div>
+                </div>
+            </div>
+
+            <div id="recipe-ingredients-list" class="space-y-3 overflow-y-auto no-scrollbar flex-1 my-2 pr-1"></div>
+
+            <div class="relative pt-2 pb-1 border-t border-slate-800/60">
+                <div class="flex gap-2">
+                    <button type="button" id="btn-tuner-add-trigger" class="flex-1 bg-slate-950 border border-white/[0.05] rounded-xl py-2 px-3 text-xs text-left text-slate-400 flex justify-between items-center hover:text-white transition">
+                        <span id="tuner-add-label">+ Add Extra Ingredient to Meal...</span>
+                        <svg class="w-3.5 h-3.5 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
+                    </button>
+                </div>
+                <div id="tuner-food-dropdown" class="absolute left-0 right-0 bottom-full mb-2 bg-slate-800/95 backdrop-blur-xl border border-white/[0.05] rounded-2xl shadow-2xl max-h-40 overflow-y-auto no-scrollbar z-30 hidden py-1">
+                    <div id="tuner-food-dropdown-list"></div>
+                </div>
+            </div>
+
+            <div class="flex gap-3 pt-3 border-t border-slate-800 flex-shrink-0">
+                <button type="button" id="btn-cancel-recipe" class="w-1/3 py-4 rounded-2xl font-bold text-sm bg-slate-800 text-slate-300 hover:bg-slate-700 transition active:scale-[0.97]">Cancel</button>
+                <button type="button" id="btn-confirm-recipe" class="w-2/3 py-4 rounded-2xl font-bold text-sm bg-emerald-600 text-white hover:bg-emerald-500 transition shadow-lg shadow-emerald-900/20 active:scale-[0.97]">Log Meal Group</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- SLIDE-UP SINGLE FOOD LOGGING MODAL -->
+    <div id="logging-modal" class="fixed inset-0 z-50 flex items-end justify-center pointer-events-none transition-opacity duration-300 opacity-0 hidden">
+        <div id="modal-backdrop" class="absolute inset-0 bg-slate-950/60 backdrop-blur-md pointer-events-auto"></div>
+        <div id="modal-content" class="relative w-full max-w-2xl bg-slate-900 border-t border-white/[0.05] rounded-t-3xl p-6 pb-12 pointer-events-auto transform translate-y-full transition-transform duration-300 ease-out shadow-[0_-10px_40px_rgba(0,0,0,0.5)]">
+            <div class="w-10 h-1.5 bg-slate-700 rounded-full mx-auto mb-2 shrink-0"></div>
+            <div class="text-center mb-6">
+                <h3 id="modal-food-name" class="text-xl font-bold text-white mb-1">Food Name</h3>
+                <p class="text-sm text-slate-400">Default: <span id="modal-food-base">100g</span></p>
+            </div>
+            <div class="flex justify-between items-center bg-slate-950/50 rounded-2xl p-4 mb-6 border border-white/[0.05]">
+                <div class="text-center w-1/4"><div id="modal-cal" class="text-lg font-bold text-white">0</div><div class="text-[10px] uppercase tracking-wider text-slate-500 font-bold">Kcal</div></div>
+                <div class="text-center w-1/4"><div id="modal-p" class="text-lg font-bold text-blue-400">0g</div><div class="text-[10px] uppercase tracking-wider text-slate-500 font-bold">Pro</div></div>
+                <div class="text-center w-1/4"><div id="modal-c" class="text-lg font-bold text-emerald-400">0g</div><div class="text-[10px] uppercase tracking-wider text-slate-500 font-bold">Carb</div></div>
+                <div class="text-center w-1/4"><div id="modal-f" class="text-lg font-bold text-rose-400">0g</div><div class="text-[10px] uppercase tracking-wider text-slate-500 font-bold">Fat</div></div>
+            </div>
+            <div class="flex gap-4 mb-8">
+                <div class="w-1/3">
+                    <label class="text-[10px] font-bold text-slate-500 uppercase tracking-wider pl-1">Servings</label>
+                    <input type="number" id="modal-qty-input" value="1" step="0.1" class="w-full bg-slate-950 border border-white/[0.05] rounded-2xl py-4 text-center text-xl font-bold text-white focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition mt-1">
+                </div>
+                
+                <div class="w-2/3 relative">
+                    <label class="text-[10px] font-bold text-slate-500 uppercase tracking-wider pl-1">Serving Size</label>
+                    <input type="hidden" id="modal-unit-scale-value" value="1">
+                    <input type="hidden" id="modal-unit-label-value" value="1 serving">
+                    <button type="button" id="btn-modal-unit-trigger" class="w-full bg-slate-950 border border-white/[0.05] rounded-2xl py-4 pl-4 pr-10 text-base font-bold text-left text-white focus:outline-none focus:border-blue-500 transition mt-1 flex justify-between items-center">
+                        <span id="modal-unit-trigger-label" class="truncate">1 serving</span>
+                        <svg class="w-5 h-5 text-slate-400 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
+                    </button>
+
+                    <div id="modal-unit-dropdown" class="absolute left-0 right-0 top-full mt-2 bg-slate-800/95 backdrop-blur-xl border border-white/[0.05] rounded-2xl shadow-2xl max-h-48 overflow-y-auto no-scrollbar z-30 hidden py-1">
+                        <div id="modal-unit-dropdown-list"></div>
+                    </div>
+                </div>
+            </div>
+            <div class="flex gap-3">
+                <button id="btn-cancel-log" class="w-1/3 py-4 rounded-2xl font-bold text-sm bg-slate-800 text-slate-300 hover:bg-slate-700 transition active:scale-[0.97]">Cancel</button>
+                <button id="btn-confirm-log" class="w-2/3 py-4 rounded-2xl font-bold text-sm bg-blue-600 text-white hover:bg-blue-500 active:bg-blue-700 transition shadow-lg shadow-blue-900/20 active:scale-[0.97]">Log to Diary</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- SLIDE-OUT NAVIGATION DRAWER -->
+    <div id="drawer-container" class="fixed inset-0 z-50 pointer-events-none">
+        <div id="drawer-backdrop" class="absolute inset-0 bg-slate-950/60 backdrop-blur-md opacity-0 transition-opacity duration-300 pointer-events-none"></div>
+
+        <aside id="drawer-panel" class="absolute top-0 right-0 h-full w-72 max-w-[85vw] bg-slate-900 border-l border-white/[0.05] p-6 flex flex-col justify-between transform translate-x-full transition-transform duration-300 ease-out shadow-2xl pointer-events-auto">
+            <div>
+                <div class="flex items-center justify-between pb-6 border-b border-slate-800">
+                    <div>
+                        <div class="text-sm font-bold text-white tracking-wide">MacroTracker</div>
+                        <div class="text-[10px] text-slate-500 font-semibold uppercase tracking-wider">v3.0 • Local Engine</div>
+                    </div>
+                    <button id="btn-close-drawer" class="p-2 text-slate-400 hover:text-white bg-slate-800/80 rounded-full transition active:scale-95">
+                        <svg class="w-4 h-4 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                    </button>
+                </div>
+
+                <nav class="mt-6 space-y-2">
+                    <button data-nav="view-home" class="drawer-nav-item w-full flex items-center gap-3 px-4 py-3 rounded-2xl text-sm font-semibold text-white bg-slate-800/70 hover:bg-slate-800 transition">
+                        <svg class="w-5 h-5 text-blue-400 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"></path></svg>
+                        Daily Brief
+                    </button>
+
+                    <button data-nav="view-database" class="drawer-nav-item w-full flex items-center gap-3 px-4 py-3 rounded-2xl text-sm font-semibold text-slate-300 hover:text-white hover:bg-slate-800/50 transition">
+                        <svg class="w-5 h-5 text-emerald-400 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2 1.5 3 3.5 3h9c2 0 3.5-1 3.5-3V7M4 7c0-2 1.5-3 3.5-3h9c2 0 3.5 1 3.5 3M4 7h16m-8 4v6m-4-3h8"></path></svg>
+                        Food & Meals Database
+                    </button>
+
+                    <button disabled class="w-full flex items-center justify-between px-4 py-3 rounded-2xl text-sm font-semibold text-slate-500 cursor-not-allowed opacity-60">
+                        <span class="flex items-center gap-3">
+                            <svg class="w-5 h-5 text-slate-600 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 6l3 1m0 0l-3 9a5.002 5.002 0 006.001 0M6 7l3 9M6 7l6-2m6 2l3-1m-3 1l-3 9a5.002 5.002 0 006.001 0M18 7l3 9m-3-9l-6-2m0-2v2m0 16V5m0 16H9m3 0h3"></path></svg>
+                            Weight Log
+                        </span>
+                        <span class="text-[9px] uppercase tracking-wider bg-slate-800 px-2 py-0.5 rounded font-bold text-slate-400">Soon</span>
+                    </button>
+
+                    <button disabled class="w-full flex items-center justify-between px-4 py-3 rounded-2xl text-sm font-semibold text-slate-500 cursor-not-allowed opacity-60">
+                        <span class="flex items-center gap-3">
+                            <svg class="w-5 h-5 text-slate-600 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path></svg>
+                            Goals & Targets
+                        </span>
+                        <span class="text-[9px] uppercase tracking-wider bg-slate-800 px-2 py-0.5 rounded font-bold text-slate-400">Soon</span>
+                    </button>
+                </nav>
+            </div>
+
+            <div class="pt-6 border-t border-slate-800 text-xs text-slate-500 flex justify-between items-center">
+                <span>Storage</span>
+                <span class="text-emerald-400 font-semibold flex items-center gap-1.5">
+                    <span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span> Local Only
+                </span>
+            </div>
+        </aside>
+    </div>
+
+    <script type="module" src="./main.js"></script>
+</body>
+</html>

@@ -24,7 +24,7 @@
 /* Also works while the Tailwind CDN is unavailable. */
 .hidden, [hidden] { display: none !important; }
 .select-trigger { background: #020617; color: #e2e8f0; border: 1px solid #334155; border-radius: .75rem; padding: .5rem .65rem; cursor: pointer; }
-.select-trigger::after { content: ' ▾'; color: #94a3b8; }
+.select-trigger[aria-haspopup="listbox"]::after { content: ' ▾'; color: #94a3b8; }
 .select-menu { position: fixed; z-index: 100; box-sizing: border-box; background: #1e293b; color: #e2e8f0; border: 1px solid #475569; border-radius: .875rem; padding: .25rem; box-shadow: 0 12px 32px #0008; overflow-y: auto; overscroll-behavior: contain; touch-action: pan-y; }
 .select-menu button { display: block; width: 100%; border: 0; border-radius: .5rem; background: transparent; color: inherit; text-align: left; padding: .75rem; font: inherit; cursor: pointer; }
 .select-menu button:hover, .select-menu button:focus, .select-menu button[aria-selected=true] { background: #334155; outline: 2px solid transparent; }
@@ -40,3 +40,9 @@
 #drawer-panel { display: flex; flex-direction: column; justify-content: flex-start; }
 #account-panel { margin-top: 1.5rem; flex-shrink: 0; }
 .dashboard-ring { transition: stroke-dashoffset 300ms ease-out; }
+.centered-dialog { position: fixed; inset: 0; z-index: 70; display: grid; place-items: center; padding: 1rem; }
+.centered-backdrop { position: absolute; inset: 0; background: #020617b3; }
+.centered-panel { position: relative; width: min(100%, 34rem); max-height: calc(100dvh - 2rem); overflow-y: auto; overscroll-behavior: contain; background: #0f172a; border: 1px solid #334155; border-radius: 1.5rem; padding: 1.5rem; color: #f1f5f9; box-shadow: 0 18px 70px #0008; opacity: 0; transform: translate3d(0,12px,0) scale(.98); transition: transform 180ms ease, opacity 180ms ease; }
+.centered-panel.dialog-visible { opacity: 1; transform: translate3d(0,0,0) scale(1); }
+.centered-panel:focus { outline: none; }
+#calorie-lock { display: inline; width: auto; }

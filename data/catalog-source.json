@@ -1,0 +1,9 @@
+{
+  "title": "Archived USDA reference food database",
+  "records": 6636,
+  "categories": 25,
+  "source": "https://raw.githubusercontent.com/wesm/pydata-book/a892791ce5a3831134cfa2989033ecbb9289f1ea/datasets/usda_food/database.json",
+  "sourceSHA256": "0708114d31e5dfa614ffaeafffbb2f78d0ef966c2624100749b8093f399722f2",
+  "nutritionBasis": "100 grams",
+  "notice": "Historical USDA reference values; branded products and current formulations should be checked through USDA or Open Food Facts."
+}

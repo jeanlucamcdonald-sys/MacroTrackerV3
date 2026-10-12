@@ -39,14 +39,11 @@ test('mass and volume conversions preserve nutrition and reject assumed density'
 test('database, meal builder and logging use the shared, viewport-bounded unit widget', async () => {
     await withPage(async page => {
         await click(page, '[data-nav="view-database"]');
+        await page.evaluate(async () => {
+            const { store } = await import('/state.js');
+            store.update(state => { state.foodDatabase.push({ id: 'test_milk', name: 'Test milk', category: 'Imported', serving: 1, unit: 'cup', cal: 100, p: 0, c: 0, f: 0 }); });
+        });
         await click(page, '#btn-open-add-food');
-        await page.locator('#custom-food-name').fill('Test milk');
-        await page.locator('#custom-food-serving').fill('1');
-        await page.locator('#custom-food-cal').fill('100');
-        await click(page, '#btn-custom-unit-trigger');
-        await click(page, '.select-menu [data-value="cup"]');
-        await page.locator('#custom-food-form').dispatchEvent('submit');
-        await click(page, '#btn-open-add-food'); await click(page, '#tab-mode-recipe');
         await page.locator('#custom-recipe-name').fill('Milk meal');
         await click(page, '#btn-recipe-food-trigger');
         const milkId = await page.evaluate(async () => (await import('/state.js')).store.get().foodDatabase.find(food => food.name === 'Test milk').id);

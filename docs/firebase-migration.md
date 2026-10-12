@@ -1,6 +1,6 @@
 # Cloud-backed MacroTracker
 
-The app remains vanilla JavaScript ES modules. Firebase Authentication supports Email/Password and Google; Firestore stores account data. The public client configuration for `cal-tracker-70796` is in `firebase-config.js`. A Firebase API key is not a service-account credential; authorization is enforced by `firestore.rules`.
+See [nutrition-upgrades.md](nutrition-upgrades.md) for guided onboarding, balanced target calculations, the bundled reference catalog, centered account controls, and authentication recovery. The app remains vanilla JavaScript ES modules. Firebase Authentication supports Email/Password and Google; Firestore stores account data. The public client configuration for `cal-tracker-70796` is in `firebase-config.js`. A Firebase API key is not a service-account credential; authorization is enforced by `firestore.rules`.
 
 ## Development
 

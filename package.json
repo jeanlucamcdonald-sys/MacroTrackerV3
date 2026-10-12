@@ -4,9 +4,10 @@
   "type": "module",
   "scripts": {
     "build": "esbuild firebase-adapter.js --bundle --format=esm --outfile=dist/firebase-adapter.js --external:./cloud-model.js --minify && node scripts/copy-cloud-model.cjs && esbuild scanner-library.js --bundle --format=esm --outfile=dist/scanner.js --minify && tailwindcss -i tailwind-input.css -o dist/tailwind.css --minify && node scripts/build-version.cjs",
-    "test:browser": "node --test tests/dashboard.test.cjs tests/phase-1.test.cjs tests/app-improvements.test.cjs",
+    "test:browser": "node --test tests/dashboard.test.cjs tests/phase-1.test.cjs tests/app-improvements.test.cjs tests/upgrades.test.cjs",
     "test:rules": "firebase emulators:exec --project demo-macrotracker --only firestore 'node --test tests/firestore-rules.test.cjs'",
-    "test:cloud": "firebase emulators:exec --project demo-macrotracker --only auth,firestore \"MACROTRACKER_EMULATORS=1 node --test tests/cloud-browser.test.cjs\""
+    "test:cloud": "firebase emulators:exec --project demo-macrotracker --only auth,firestore \"MACROTRACKER_EMULATORS=1 node --test tests/cloud-browser.test.cjs\"",
+    "test:engine": "node --test tests/nutrition-engine.test.cjs"
   },
   "dependencies": {
     "firebase": "11.10.0",

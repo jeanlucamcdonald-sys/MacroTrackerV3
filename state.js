@@ -1,4 +1,5 @@
 import { createStore } from './store.js';
+import { normalizeTargets, validTargets } from './nutrition-engine.js';
 import { deviceCache } from './persistence.js';
 
 // state.js
@@ -13,13 +14,13 @@ export const DEFAULT_STATE = {
         onboardingComplete: false,
         goalWeight: 0,
         rate: "-1",
-        isCalLocked: false
+        isCalLocked: true
     },
     targets: {
         cal: 2000,
         p: 150,
         c: 200,
-        f: 65
+        f: 600 / 9
     },
     foodDatabase: [
         { id: 1, name: "Chicken Breast (Raw)", category: "Proteins", serving: 100, unit: "g", cal: 120, p: 22.5, c: 0, f: 2.6 },
@@ -37,7 +38,7 @@ function finiteMacros(value) {
     return isRecord(value) && ['cal', 'p', 'c', 'f'].every(key => Number.isFinite(value[key]) && value[key] >= 0);
 }
 export function validateState(state) {
-    if (!isRecord(state) || !isRecord(state.settings) || !finiteMacros(state.targets)
+    if (!isRecord(state) || !isRecord(state.settings) || !validTargets(state.targets)
         || !Array.isArray(state.foodDatabase) || !Array.isArray(state.weightLog)
         || !isRecord(state.logs) || (state.recipes !== undefined && !Array.isArray(state.recipes))) return false;
     if (!state.foodDatabase.every(food => finiteMacros(food) && typeof food.name === 'string' && Number.isFinite(food.serving) && food.serving > 0)) return false;
@@ -58,6 +59,8 @@ export function normalizeState(parsed) {
         settings: { ...DEFAULT_STATE.settings, ...parsed.settings },
         targets: { ...DEFAULT_STATE.targets, ...parsed.targets }
     };
+    state.targets = normalizeTargets(state.targets);
+    state.profile = { ...DEFAULT_STATE.profile, ...state.profile };
     if (!validateState(state)) throw new TypeError('Invalid state');
     return state;
 }

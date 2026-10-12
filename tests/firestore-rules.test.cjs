@@ -12,7 +12,7 @@ beforeEach(() => environment.clearFirestore());
 after(() => environment.cleanup());
 const totals = { cal: 2000, p: 150, c: 200, f: 65 };
 const records = {
-    'profile/current': { version: '3.0', profile: { displayName: 'Alice' }, settings: {}, targets: totals, _revision: 1 },
+    'profile/current': { version: '3.0', profile: { displayName: 'Alice' }, settings: {}, targets: { cal: 2000, p: 150, c: 200, f: 600 / 9 }, _revision: 1 },
     'catalog/current': { foodDatabase: [], recipes: [], _revision: 1 },
     'logs/2026-10-12': { date: '2026-10-12', totals, diary: [], _revision: 1 },
     'weightLogs/w1': { id: 'w1', timestamp: '2026-10-12T12:00:00.000Z', value: 75, unit: 'kg', _revision: 1 }
@@ -43,6 +43,7 @@ test('malformed dates, negative goals and invalid weight values are denied', asy
     const db = environment.authenticatedContext('alice').firestore();
     await assertFails(setDoc(doc(db, 'users/alice/logs/2026-10-13'), records['logs/2026-10-12']));
     await assertFails(setDoc(doc(db, 'users/alice/profile/current'), { ...records['profile/current'], targets: { ...totals, cal: -1 } }));
+    await assertFails(setDoc(doc(db, 'users/alice/profile/current'), { ...records['profile/current'], targets: { cal: 2000, p: 1000, c: 0, f: 0 } }));
     await assertFails(setDoc(doc(db, 'users/alice/weightLogs/w1'), { ...records['weightLogs/w1'], value: -3 }));
     await assertFails(setDoc(doc(db, 'users/alice/catalog/current'), { ...records['catalog/current'], admin: true }));
     await assertFails(setDoc(doc(db, 'users/alice/private/anything'), { value: 1 }));

@@ -14,12 +14,15 @@ async function pageFor(browser) {
     return { page, context };
 }
 async function signIn(page, email, create = false) {
+    await click(page, '#btn-account');
+    await click(page, '[data-dialog-tab="account"].select-trigger');
     await page.waitForFunction(() => document.querySelector('#account-panel').dataset.authReady === 'true');
     await page.locator('#auth-form input[name=email]').fill(email);
     await page.locator('#auth-form input[name=password]').fill('test-password-123');
     if (create) await click(page, '#btn-sign-up');
     else await page.locator('#auth-form').dispatchEvent('submit');
     await page.waitForFunction(() => document.querySelector('#cloud-status').textContent === 'Backed up to your account.');
+    await click(page, '#btn-close-account');
 }
 async function logChicken(page) {
     await page.locator('#food-search-input').fill('Chicken');
@@ -48,12 +51,12 @@ test('Firebase auth and Firestore restore data after clearing browser storage, w
         assert.equal(await page.locator('[data-value="total-cal"]').textContent(), '120');
         await logChicken(page);
         assert.equal(await page.locator('[data-value="total-cal"]').textContent(), '240');
-        await click(page, '#btn-sign-out');
+        await click(page, '#btn-account'); await click(page, '[data-dialog-tab="account"].select-trigger'); await click(page, '#btn-sign-out');
         await page.waitForFunction(() => !document.querySelector('#auth-form').hidden);
         await signIn(page, otherEmail, true);
         assert.equal(await page.locator('[data-value="total-cal"]').textContent(), '0');
         await logChicken(page);
-        await click(page, '#btn-sign-out');
+        await click(page, '#btn-account'); await click(page, '[data-dialog-tab="account"].select-trigger'); await click(page, '#btn-sign-out');
         await page.waitForFunction(() => !document.querySelector('#auth-form').hidden);
         await signIn(page, email);
         assert.equal(await page.locator('[data-value="total-cal"]').textContent(), '240');
@@ -106,4 +109,70 @@ test('concurrent edits are rejected instead of overwriting a newer cloud diary',
         await signIn(third.page, email);
         assert.equal(await third.page.locator('[data-value="total-cal"]').textContent(), '120');
     } finally { await browser.close(); }
+});
+
+test('a returning account restores legacy balanced targets and recovers a profile-load failure without losing auth', { skip: !process.env.MACROTRACKER_EMULATORS }, async () => {
+    const browser = await chromium.launch({ executablePath: '/usr/bin/chromium', headless: true, args: ['--no-sandbox'] });
+    const { initializeTestEnvironment } = require('@firebase/rules-unit-testing');
+    const { doc, setDoc } = require('firebase/firestore');
+    const environment = await initializeTestEnvironment({ projectId: 'demo-macrotracker', firestore: { host: '127.0.0.1', port: 8080 } });
+    try {
+        const first = await pageFor(browser);
+        const email = `returning-primary-${Date.now()}@example.test`;
+        await signIn(first.page, email, true);
+        const uid = await first.page.evaluate(async () => {
+            // UID is the device cache scope, not a provider token.
+            return (await import('/persistence.js')).deviceCache.scope;
+        });
+        await environment.withSecurityRulesDisabled(async context => {
+            await setDoc(doc(context.firestore(), `users/${uid}/profile/current`), {
+                version: '2.0', profile: { displayName: 'Returning user' }, settings: { onboardingComplete: true },
+                targets: { cal: 2000, p: 150, c: 200, f: 65 }, _revision: 2
+            });
+        });
+        await first.context.close();
+        const returning = await pageFor(browser);
+        await signIn(returning.page, email);
+        const targets = await returning.page.evaluate(async () => (await import('/state.js')).store.get().targets);
+        assert.ok(Math.abs(targets.cal - 4 * targets.p - 4 * targets.c - 9 * targets.f) < 1e-5);
+        await returning.context.close();
+        await environment.withSecurityRulesDisabled(async context => {
+            await setDoc(doc(context.firestore(), `users/${uid}/catalog/current`), { foodDatabase: 'invalid legacy field', recipes: [], _revision: 2 });
+        });
+        const broken = await pageFor(browser);
+        await click(broken.page, '#btn-account'); await click(broken.page, '[data-dialog-tab="account"].select-trigger');
+        await broken.page.waitForFunction(() => document.querySelector('#account-panel').dataset.authReady === 'true');
+        await broken.page.locator('#auth-form input[name=email]').fill(email);
+        await broken.page.locator('#auth-form input[name=password]').fill('test-password-123');
+        await broken.page.locator('#auth-form').dispatchEvent('submit');
+        await broken.page.waitForFunction(() => document.querySelector('#cloud-status').textContent.includes('Sign-in succeeded'));
+        assert.equal(await broken.page.locator('#auth-form').evaluate(el => el.hidden), true);
+        assert.equal(await broken.page.locator('#btn-sign-out').evaluate(el => el.hidden), false);
+        await environment.withSecurityRulesDisabled(async context => {
+            await setDoc(doc(context.firestore(), `users/${uid}/catalog/current`), { foodDatabase: [], recipes: [], _revision: 3 });
+        });
+        await click(broken.page, '#btn-sync-retry');
+        await broken.page.waitForFunction(() => document.querySelector('#cloud-status').textContent === 'Backed up to your account.');
+        assert.equal(await broken.page.evaluate(async () => (await import('/persistence.js')).deviceCache.scope), uid);
+    } finally { await environment.cleanup(); await browser.close(); }
+});
+
+test('cloud diary without a profile document is restored rather than overwritten as a new account', { skip: !process.env.MACROTRACKER_EMULATORS }, async () => {
+    const browser = await chromium.launch({ executablePath: '/usr/bin/chromium', headless: true, args: ['--no-sandbox'] });
+    const { initializeTestEnvironment } = require('@firebase/rules-unit-testing');
+    const { doc, deleteDoc } = require('firebase/firestore');
+    const environment = await initializeTestEnvironment({ projectId: 'demo-macrotracker', firestore: { host: '127.0.0.1', port: 8080 } });
+    try {
+        const first = await pageFor(browser);
+        const email = `missing-profile-${Date.now()}@example.test`;
+        await signIn(first.page, email, true); await logChicken(first.page);
+        const uid = await first.page.evaluate(async () => (await import('/persistence.js')).deviceCache.scope);
+        await environment.withSecurityRulesDisabled(async context => {
+            await deleteDoc(doc(context.firestore(), `users/${uid}/profile/current`));
+            await deleteDoc(doc(context.firestore(), `users/${uid}/catalog/current`));
+        });
+        await first.context.close();
+        const returning = await pageFor(browser); await signIn(returning.page, email);
+        assert.equal(await returning.page.locator('[data-value="total-cal"]').textContent(), '120');
+    } finally { await environment.cleanup(); await browser.close(); }
 });

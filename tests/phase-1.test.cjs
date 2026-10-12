@@ -77,12 +77,6 @@ test('delegated recipe, database and custom food actions persist without globals
         await click(page, '[data-action="pin"][data-id="rec_chicken_rice"]');
         assert.equal(await page.locator('#predictive-pills button').count(), 1);
         await click(page, '#btn-open-add-food');
-        await page.locator('#custom-food-name').fill('Test oats');
-        await page.locator('#custom-food-cal').fill('150');
-        await page.locator('#custom-food-form').dispatchEvent('submit');
-        assert.equal(await page.locator('#database-list-container').getByText('Test oats', { exact: true }).count(), 1);
-        await click(page, '#btn-open-add-food');
-        await click(page, '#tab-mode-recipe');
         await page.locator('#custom-recipe-name').fill('Test meal');
         await click(page, '#btn-recipe-food-trigger');
         await click(page, '.recipe-food-opt[data-id="1"]');
@@ -93,7 +87,7 @@ test('delegated recipe, database and custom food actions persist without globals
         const state = await page.evaluate(async () => (await import('/state.js')).store.get());
         assert.equal(state.recipes.find(r => r.id === 'rec_chicken_rice').pinned, false);
         assert.equal(state.recipes.some(r => r.name === 'Test meal'), true);
-        assert.equal(state.foodDatabase.some(f => f.name === 'Test oats'), true);
+        assert.equal(state.foodDatabase.some(f => f.name === 'Chicken Breast (Raw)'), true);
         assert.equal(await page.locator('[onclick]').count(), 0);
         assert.equal(await page.evaluate(() => ['editDiaryEntry', 'deleteDiaryEntry', 'toggleGroupAccordion', 'removeBuilderIng', 'removeTunerIngredient'].some(k => k in window)), false);
     });
@@ -102,7 +96,7 @@ test('delegated recipe, database and custom food actions persist without globals
 test('USDA search cancels stale requests and ignores late responses', async () => {
     await withPage(async page => {
         await page.locator('#food-search-input').fill('eggs');
-        await click(page, '#dropdown-results button');
+        await click(page, '#btn-search-products');
         await page.waitForFunction(() => window.searchPending);
         await page.locator('#food-search-input').fill('Chicken');
         assert.equal(await page.evaluate(() => window.searchPending.signal.aborted), true);

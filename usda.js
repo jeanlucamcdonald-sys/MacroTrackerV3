@@ -4,7 +4,7 @@ const BASE_URL = 'https://api.nal.usda.gov/fdc/v1/foods/search';
 function getNutrient(nutrientsArray, nutrientId) {
     if (!nutrientsArray) return 0;
     const nutrient = nutrientsArray.find(n => n.nutrientId === nutrientId || n.nutrientNumber === nutrientId.toString());
-    return nutrient ? nutrient.value : 0; // Return exact decimal for math
+    return nutrient ? nutrient.value : undefined; // Return exact decimal for math
 }
 
 export async function searchExternalDatabase(query, { signal } = {}) {
@@ -15,24 +15,17 @@ export async function searchExternalDatabase(query, { signal } = {}) {
         
         if (!response.ok) {
             console.error("❌ USDA API Error:", response.status, response.statusText);
-            return [];
+            throw new Error(`USDA lookup returned ${response.status}`);
         }
         
         const data = await response.json();
         if (!data.foods || data.foods.length === 0) return [];
         
         let normalizedResults = data.foods.map(food => {
-            // Extract the actual serving size, defaulting to 100g if unlisted
-            let serving = food.servingSize || 100;
-            let unit = food.servingSizeUnit || "g";
-            
-            // Normalize strange USDA units
-            if (unit.toUpperCase() === "GRM") unit = "g";
-            if (unit.toUpperCase() === "MLT") unit = "ml";
-
-            // USDA stores nutrients per 100g, so we scale them to the actual serving
-            const scale = serving / 100;
-
+            // USDA search nutrients are per 100g; do not assume ml-to-gram density.
+            const serving = 100;
+            const unit = 'g';
+            const scale = 1;
             return {
                 id: `usda_${food.fdcId}`,
                 name: food.description,
@@ -44,7 +37,7 @@ export async function searchExternalDatabase(query, { signal } = {}) {
                 c: Math.round(getNutrient(food.foodNutrients, 1005) * scale),
                 f: Math.round(getNutrient(food.foodNutrients, 1004) * scale)
             };
-        });
+        }).filter(food => ['cal', 'p', 'c', 'f'].every(key => Number.isFinite(food[key]) && food[key] >= 0));
 
         // Relevance Engine
         const qLower = query.toLowerCase().trim();
@@ -84,6 +77,6 @@ export async function searchExternalDatabase(query, { signal } = {}) {
     } catch (error) {
         if (signal?.aborted || error.name === 'AbortError') throw error;
         console.error("❌ USDA API Request Failed:", error);
-        return [];
+        throw error;
     }
 }

@@ -41,6 +41,11 @@ export function createCloudSync(adapter, report) {
         timer = setTimeout(() => { void flush(); }, 200);
     });
     async function loadUser(user) {
+        if (!user && deviceCache.scope === 'guest') {
+            generation++; clearTimeout(timer); hydrating = false; session = null;
+            status('guest');
+            return;
+        }
         const request = ++generation;
         clearTimeout(timer);
         hydrating = true;
@@ -48,7 +53,6 @@ export function createCloudSync(adapter, report) {
         report({ phase: 'loading', user });
         try {
             if (!user) {
-                if (deviceCache.scope === 'guest') { status('guest'); return; }
                 const guest = await deviceCache.read('guest');
                 if (request !== generation || disposed) return;
                 deviceCache.activate('guest');
@@ -60,7 +64,8 @@ export function createCloudSync(adapter, report) {
             let remote;
             try { remote = await adapter.read(user.uid); }
             catch (error) {
-                if (!cached) throw error;
+                // Data/permission failures are not offline mode or invalid login credentials.
+                if (!cached || !['unavailable', 'deadline-exceeded', 'auth/network-request-failed'].includes(error.code)) throw error;
                 remote = { state: cached.baseline || cached.state, revisions: null, offline: true };
             }
             if (request !== generation || disposed) return;
@@ -98,6 +103,10 @@ export function createCloudSync(adapter, report) {
     const retryTimer = setInterval(() => { if (session && !session.conflict) void retry(); }, 15_000);
     return {
         flush: retry,
+        async retryLoad() {
+            const user = adapter.currentUser();
+            if (user) await loadUser(user);
+        },
         async reloadCloud() {
             if (!session) return;
             const remote = await adapter.read(session.user.uid);

@@ -1,6 +1,7 @@
 import { initializeApp, deleteApp } from 'firebase/app';
-import { getAuth, onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, signInWithPopup, GoogleAuthProvider, signOut, connectAuthEmulator, setPersistence, browserLocalPersistence } from 'firebase/auth';
+import { getAuth, onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, signInWithPopup, GoogleAuthProvider, signOut, connectAuthEmulator, setPersistence, browserLocalPersistence, browserSessionPersistence, inMemoryPersistence, sendPasswordResetEmail, linkWithCredential } from 'firebase/auth';
 import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager, collection, getDocsFromServer, getDocFromServer, doc, runTransaction, connectFirestoreEmulator } from 'firebase/firestore';
+import { createAuthActions } from './auth-actions.js';
 import { documentsState } from './cloud-model.js';
 
 export async function createFirebaseAdapter(config) {
@@ -13,14 +14,23 @@ export async function createFirebaseAdapter(config) {
         connectAuthEmulator(auth, `http://${host}:${config.emulators.authPort || 9099}`, { disableWarnings: true });
         connectFirestoreEmulator(db, host, config.emulators.firestorePort || 8080);
     }
-    await setPersistence(auth, browserLocalPersistence);
+    // Restricted browsers can reject durable auth persistence without invalid credentials.
+    try { await setPersistence(auth, browserLocalPersistence); }
+    catch {
+        try { await setPersistence(auth, browserSessionPersistence); }
+        catch { await setPersistence(auth, inMemoryPersistence); }
+    }
+    const googleProvider = new GoogleAuthProvider();
+    googleProvider.setCustomParameters({ prompt: 'select_account' });
     return {
         destroy: () => deleteApp(app),
+        currentUser: () => auth.currentUser,
         onAuth: callback => onAuthStateChanged(auth, callback),
-        signIn: (email, password) => signInWithEmailAndPassword(auth, email, password),
-        signUp: (email, password) => createUserWithEmailAndPassword(auth, email, password),
-        google: () => signInWithPopup(auth, new GoogleAuthProvider()),
-        signOut: () => signOut(auth),
+        ...createAuthActions(auth, {
+            signInWithEmailAndPassword, createUserWithEmailAndPassword, signInWithPopup,
+            linkWithCredential, signOut, sendPasswordResetEmail,
+            credentialFromError: error => GoogleAuthProvider.credentialFromError(error)
+        }, googleProvider),
         async read(uid) {
             const documents = new Map();
             const revisions = new Map();
@@ -37,7 +47,14 @@ export async function createFirebaseAdapter(config) {
                     for (const entry of snapshot.docs) add(`${group}/${entry.id}`, entry);
                 })
             ]);
-            return { state: documents.has('profile/current') ? documentsState(documents) : null, revisions };
+            try {
+                return { state: documents.size ? documentsState(documents) : null, revisions };
+            } catch (cause) {
+                const error = new Error('Sign-in succeeded, but this account contains an incompatible diary format. Its cloud records have not been overwritten.');
+                error.code = 'sync/invalid-data';
+                error.cause = cause;
+                throw error;
+            }
         },
         async write(uid, changes, revisions) {
             // Chunk large imports while checking every document revision atomically.

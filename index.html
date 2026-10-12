@@ -23,7 +23,7 @@
 
     <!-- FLOATING TOP NAV -->
     <nav class="absolute top-0 w-full p-6 flex justify-between items-center z-40">
-        <div class="w-8"></div>
+        <button id="btn-account" type="button" class="select-trigger" aria-label="Open account controls">Account</button>
         <button id="btn-menu" class="p-2 text-slate-400 hover:text-white transition bg-slate-900/50 rounded-full backdrop-blur-md active:scale-95">
             <svg class="w-6 h-6 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"></path></svg>
         </button>
@@ -36,10 +36,14 @@
         <section id="view-home" class="app-view block max-w-2xl mx-auto w-full px-6 pt-[15vh] relative z-10">
 
             <div class="text-center mb-8 relative">
-                <h1 class="text-4xl md:text-5xl font-semibold tracking-tight text-white mb-3">Your daily brief.</h1>
-                <p class="text-lg text-slate-400">What's fueling your training tonight?</p>
+                <h1 id="dashboard-greeting" class="text-4xl md:text-5xl font-semibold tracking-tight text-white mb-3">Welcome there</h1>
+                <p id="dashboard-prompt" class="text-lg text-slate-400">What's fueling you today?</p>
             </div>
 
+            <div id="onboarding-card" class="account-card mb-6">
+                <p class="font-semibold mb-2">Start with targets built for you.</p>
+                <button type="button" id="btn-start-onboarding" class="primary-button">Set up your plan</button>
+            </div>
             <!-- Central Search Engine -->
             <div class="relative z-30 max-w-md mx-auto mb-8 w-full group">
                 <div class="relative shadow-xl rounded-3xl transition-transform duration-300 ease-out focus-within:scale-[1.03] focus-within:shadow-[0_0_30px_-10px_rgba(59,130,246,0.25)] bg-slate-900/90 backdrop-blur-lg border border-white/[0.05] focus-within:border-blue-500/50">
@@ -78,10 +82,10 @@
             <div class="flex justify-between items-center mb-6">
                 <div>
                     <h2 class="text-2xl font-bold text-white">Database</h2>
-                    <p class="text-xs text-slate-400 mt-1">Manage single foods, staple meal groups, and recipes.</p>
+                    <p class="text-xs text-slate-400 mt-1">Browse 6,636 built-in reference foods, current products, and your meals.</p>
                 </div>
                 <button id="btn-open-add-food" class="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs rounded-xl transition shadow-lg shadow-blue-900/20 active:scale-[0.97]">
-                    + Add New
+                    + Build Meal
                 </button>
             </div>
 
@@ -103,25 +107,7 @@
 
         <div class="fixed bottom-0 left-0 w-full h-32 bg-gradient-to-t from-slate-950 via-slate-950/80 to-transparent pointer-events-none z-20"></div>
 
-        <section id="view-profile" class="app-view hidden max-w-2xl mx-auto w-full px-6 pt-24 pb-12">
-            <h2 class="text-2xl font-bold mb-2">Profile &amp; Goals</h2>
-            <p id="onboarding-status" class="text-slate-400 mb-6"></p>
-            <form id="profile-form" class="account-card space-y-4">
-                <label>Display name<input name="displayName" maxlength="80" autocomplete="name"></label>
-                <label>Height (cm)<input name="heightCm" type="number" min="30" max="300" step="0.1"></label>
-                <label>Goal weight<input name="goalWeight" type="number" min="1" max="1999" step="0.1"></label>
-                <label>Weight unit<input name="weightUnit" type="hidden" value="kg"><button type="button" id="btn-profile-weight-unit" class="select-trigger">Kilograms (kg)</button></label>
-                <button type="submit" class="primary-button">Save profile</button>
-            </form>
-            <form id="goals-form" class="account-card space-y-4 mt-6">
-                <h3 class="font-bold">Daily macronutrient goals</h3>
-                <label>Calories (kcal)<input name="cal" type="number" min="0" max="100000" required></label>
-                <label>Protein (g)<input name="p" type="number" min="0" max="100000" step="0.1" required></label>
-                <label>Carbohydrates (g)<input name="c" type="number" min="0" max="100000" step="0.1" required></label>
-                <label>Fat (g)<input name="f" type="number" min="0" max="100000" step="0.1" required></label>
-                <button type="submit" class="primary-button">Save goals</button>
-            </form>
-        </section>
+
         <section id="view-weight" class="app-view hidden max-w-2xl mx-auto w-full px-6 pt-24 pb-12">
             <h2 class="text-2xl font-bold mb-6">Weight Log</h2>
             <form id="weight-form" class="account-card space-y-4">
@@ -240,7 +226,7 @@
                     </div>
 
                     <div id="recipe-food-dropdown" class="absolute left-0 right-14 top-full mt-2 bg-slate-800/95 backdrop-blur-xl border border-white/[0.05] rounded-2xl shadow-2xl max-h-48 overflow-y-auto no-scrollbar z-30 hidden py-1">
-                        <div id="recipe-food-dropdown-list"></div>
+                        <input id="recipe-food-search" class="w-full bg-slate-950 px-4 py-2" placeholder="Search the food database" aria-label="Search meal ingredients"><div id="recipe-food-dropdown-list"></div>
                     </div>
                 </div>
 
@@ -290,7 +276,7 @@
                     </button>
                 </div>
                 <div id="tuner-food-dropdown" class="absolute left-0 right-0 bottom-full mb-2 bg-slate-800/95 backdrop-blur-xl border border-white/[0.05] rounded-2xl shadow-2xl max-h-40 overflow-y-auto no-scrollbar z-30 hidden py-1">
-                    <div id="tuner-food-dropdown-list"></div>
+                    <input id="tuner-food-search" class="w-full bg-slate-950 px-4 py-2" placeholder="Search the food database" aria-label="Search additional ingredients"><div id="tuner-food-dropdown-list"></div>
                 </div>
             </div>
 
@@ -368,12 +354,27 @@
                         Food & Meals Database
                     </button>
 
-                    <button data-nav="view-profile" class="drawer-nav-item">Profile &amp; Goals</button>
+
                     <button data-nav="view-weight" class="drawer-nav-item">Weight Log</button>
                 </nav>
             </div>
 
-            <section id="account-panel" class="account-card mt-6" aria-label="Account and backup">
+
+        </aside>
+    </div>
+
+
+<div id="account-dialog" class="centered-dialog" hidden>
+    <div id="account-dialog-backdrop" class="centered-backdrop"></div>
+    <section id="account-dialog-panel" class="centered-panel" role="dialog" aria-modal="true" aria-labelledby="account-dialog-title" tabindex="-1">
+        <header class="flex justify-between items-start gap-3 mb-5"><h2 id="account-dialog-title" class="text-xl font-bold">Welcome!</h2><button id="btn-close-account" type="button" class="select-trigger" aria-label="Close account controls">✕</button></header>
+        <div class="flex flex-wrap gap-2 mb-4"><button type="button" data-dialog-tab="overview" class="select-trigger">Overview</button><button type="button" data-dialog-tab="account" class="select-trigger">Account</button><button type="button" data-dialog-tab="profile" class="select-trigger">Profile</button><button type="button" data-dialog-tab="settings" class="select-trigger">Settings</button></div>
+        <section data-dialog-view="overview">
+            <p class="text-slate-300 mb-4">Continue with Google or create an account to keep your diary backed up.</p>
+            <button type="button" data-dialog-tab="account" class="primary-button">Sign in or create an account</button>
+            <button type="button" data-dialog-tab="profile" class="select-trigger">Your profile</button>
+        </section>
+        <section data-dialog-view="account" hidden><section id="account-panel" class="account-card mt-6" aria-label="Account and backup">
                 <p data-user-email class="text-sm break-words"></p>
                 <p id="cloud-status" role="status" class="text-xs mb-3">Loading device diary…</p>
                 <form id="auth-form" class="space-y-2">
@@ -383,15 +384,60 @@
                     <button type="button" id="btn-sign-up" class="select-trigger">Create account</button>
                     <button type="button" id="btn-google-sign-in" class="select-trigger">Continue with Google</button>
                 </form>
+                <button id="btn-reset-password" type="button" class="select-trigger">Reset password</button>
                 <button id="btn-sign-out" type="button" class="select-trigger" hidden>Sign out</button>
                 <button id="btn-sync-retry" type="button" class="select-trigger" hidden>Retry backup</button>
                 <button id="btn-cloud-reload" type="button" class="select-trigger" hidden>Reload cloud copy</button>
                 <p class="text-xs mt-3">Storage: <span id="storage-label">Device only</span></p>
                 <button id="btn-export-backup" type="button" class="select-trigger mt-3">Export backup</button>
                 <label class="text-xs mt-3">Import backup<input id="backup-import" type="file" accept="application/json,.json"></label>
-            </section>
-        </aside>
-    </div>
+            </section></section>
+        <section data-dialog-view="profile" hidden><p id="onboarding-status" class="text-sm mb-3"></p><form id="profile-form" class="account-card space-y-4">
+                <label>Display name<input name="displayName" maxlength="80" autocomplete="name"></label>
+                <label>Height (cm)<input name="heightCm" type="number" min="30" max="300" step="0.1"></label>
+                <label>Goal weight<input name="goalWeight" type="number" min="1" max="1999" step="0.1"></label>
+                <label>Weight unit<input name="weightUnit" type="hidden" value="kg"><button type="button" id="btn-profile-weight-unit" class="select-trigger">Kilograms (kg)</button></label>
+                <button type="submit" class="primary-button">Save profile</button>
+            </form></section>
+        <section data-dialog-view="settings" hidden><form id="goals-form" class="account-card space-y-4 mt-6">
+                <h3 class="font-bold">Daily macronutrient goals</h3><button id="btn-recalculate-plan" type="button" class="select-trigger">Recalculate from your profile</button>
+                <label class="flex gap-2"><input id="calorie-lock" type="checkbox" checked> Keep calories fixed when editing macros</label>
+                <p id="macro-energy-total" class="text-sm"></p>
+                <label>Calories (kcal)<input name="cal" type="number" step="any" min="0" max="100000" required></label>
+                <label>Protein (g)<input name="p" type="number" step="any" min="0" max="100000" required></label>
+                <label>Carbohydrates (g)<input name="c" type="number" step="any" min="0" max="100000" required></label>
+                <label>Fat (g)<input name="f" type="number" step="any" min="0" max="100000" required></label>
+                <button type="submit" class="primary-button">Save goals</button>
+            </form></section>
+        <section data-dialog-view="onboarding" hidden><form id="onboarding-form" class="space-y-4">
+    <p id="onboarding-progress" class="text-sm text-slate-400"></p>
+    <section data-step="0" class="account-card">
+        <h3 class="font-bold mb-4">Your goal</h3>
+        <label>Your name<input name="displayName" maxlength="80" autocomplete="given-name" required></label>
+        <input type="hidden" name="goal" value="maintain"><button type="button" data-onboarding-select="goal" class="select-trigger">Maintain weight</button>
+    </section>
+    <section data-step="1" class="account-card" hidden>
+        <h3 class="font-bold mb-4">Your starting point</h3>
+        <label>Age<input name="age" type="number" min="18" max="100" required></label>
+        <label>Height (cm)<input name="heightCm" type="number" min="100" max="250" required></label>
+        <label>Current weight<input name="currentWeight" type="number" min="1" max="882" step="any" required></label>
+        <input type="hidden" name="weightUnit" value="kg"><button type="button" data-onboarding-select="weightUnit" class="select-trigger">Kilograms (kg)</button>
+        <p class="text-xs mt-3">This adult estimate uses height, weight, age, and a physiological baseline.</p>
+        <input type="hidden" name="sex" value="unspecified"><button type="button" data-onboarding-select="sex" class="select-trigger">Prefer not to specify (broader estimate)</button>
+    </section>
+    <section data-step="2" class="account-card" hidden>
+        <h3 class="font-bold mb-4">Your typical activity</h3>
+        <input type="hidden" name="activity" value="sedentary"><button type="button" data-onboarding-select="activity" class="select-trigger">Mostly seated</button>
+    </section>
+    <section data-step="3" class="account-card" hidden>
+        <h3 class="font-bold mb-4">Your starting plan</h3>
+        <p id="onboarding-estimate" class="text-sm leading-relaxed"></p>
+    </section>
+    <div class="flex gap-3"><button id="onboarding-back" type="button" class="select-trigger">Back</button><button id="onboarding-next" type="button" class="primary-button">Continue</button><button id="onboarding-complete" type="submit" class="primary-button" hidden>Use these targets</button></div>
+</form></section>
+        <p id="nutrition-message" class="text-sm mt-4" role="status"></p>
+    </section>
+</div>
 
     <script type="module" src="./main.js"></script>
 </body>

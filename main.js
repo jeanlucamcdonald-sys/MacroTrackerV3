@@ -1,11 +1,14 @@
 import { store } from './state.js';
 import { createRouter } from './router.js';
+import { initializeDialogs } from './dialogs.js';
 import { initializeAccount } from './account.js';
 import { createDashboard } from './dashboard.js';
 import { UNITS, unitOptions, servingFactor, ingredientFactor, convertAmount } from './units.js';
 import { localDateString, watchLocalDay } from './local-date.js';
 import { createSelectSystem } from './select-widget.js';
-import { searchExternalDatabase } from './usda.js';
+import { loadCatalog, allFoods, findFood, searchFoods } from './product-catalog.js';
+import { searchProducts } from './product-search.js';
+await loadCatalog();
 
 const lifetime = new AbortController();
 const clickHandlers = new WeakMap();
@@ -68,7 +71,8 @@ function wait(delay, signal) {
     });
 }
 let searchRequest = null;
-function cancelSearch() { searchRequest?.abort(); searchRequest = null; }
+let searchTimer;
+function cancelSearch() { clearTimeout(searchTimer); searchRequest?.abort(); searchRequest = null; }
 
 function escapeAttribute(value) {
     return String(value).replace(/[&"'<>]/g, char => ({ '&': '&amp;', '"': '&quot;', "'": '&#39;', '<': '&lt;', '>': '&gt;' }[char]));
@@ -291,7 +295,7 @@ function createFoodButton(food, isExternal = false) {
 
     btn.innerHTML = `
         <div>
-            <div class="font-bold text-slate-200 text-sm">${food.name}</div>
+            <div class="font-bold text-slate-200 text-sm">${escapeAttribute(food.name)}</div>
             <div class="text-xs text-slate-400 mt-0.5">${food.cal} kcal • ${food.p}P / ${food.c}C / ${food.f}F <span class="text-slate-600 ml-1">(per ${food.serving}${food.unit || 'g'})</span></div>
         </div>
         ${sourceTag}
@@ -309,63 +313,58 @@ function createFoodButton(food, isExternal = false) {
     return btn;
 }
 
-listen(searchInput, 'input', async (e) => {
+function renderSearchResults(query, remote = [], unavailable = []) {
+    const local = searchFoods(query, store.get().foodDatabase, 12);
+    const matches = new Map(local.map(food => [String(food.id), food]));
+    remote.forEach(food => matches.set(String(food.id), food));
+    resultsContainer.replaceChildren();
+    for (const food of [...matches.values()].slice(0, 24)) resultsContainer.append(createFoodButton(food, String(food.id).startsWith('usda_') || String(food.id).startsWith('off_')));
+    if (query.trim().length >= 3) {
+        const button = document.createElement('button');
+        button.id = 'btn-search-products';
+        button.type = 'button';
+        button.className = 'w-full text-center px-5 py-4 text-sm font-bold text-blue-400';
+        button.textContent = `Search current products for “${query}”`;
+        bindClick(button, () => runProductSearch(query));
+        resultsContainer.append(button);
+    }
+    if (unavailable.length) {
+        const note = document.createElement('p');
+        note.className = 'px-5 py-3 text-xs text-slate-400';
+        note.textContent = `${unavailable.join(' and ')} lookup is unavailable. Built-in foods remain searchable; retry later.`;
+        resultsContainer.append(note);
+    }
+}
+async function runProductSearch(query) {
     cancelSearch();
-    const query = e.target.value;
-    if (query.length === 0) {
-        dropdown.classList.add('hidden');
-        predictivePills.classList.remove('opacity-20');
-        return;
+    const request = new AbortController();
+    searchRequest = request;
+    const pending = document.createElement('p');
+    pending.className = 'px-5 py-3 text-xs text-slate-400';
+    pending.textContent = 'Looking up current products…';
+    resultsContainer.append(pending);
+    try {
+        const result = await searchProducts(query, { signal: AbortSignal.any([request.signal, AbortSignal.timeout(8000)]) });
+        if (request.signal.aborted || searchInput.value !== query || searchRequest !== request) return;
+        renderSearchResults(query, result.foods, result.unavailable);
+    } catch (error) {
+        if (request.signal.aborted) return;
+        if (searchInput.value === query) renderSearchResults(query, [], ['Online product']);
+    } finally {
+        if (searchRequest === request) searchRequest = null;
+        pending.remove();
     }
-
-    predictivePills.classList.add('opacity-20');
-    dropdown.classList.remove('hidden');
-
-    const localMatches = store.get().foodDatabase.filter(food => fuzzyMatch(food.name, query));
-    resultsContainer.innerHTML = '';
-
-    localMatches.slice(0, 3).forEach(food => {
-        resultsContainer.appendChild(createFoodButton(food, false));
-    });
-
-    if (query.length >= 3) {
-        const searchWebBtn = document.createElement('button');
-        searchWebBtn.className = "w-full text-center px-5 py-4 text-sm font-bold text-blue-400 hover:text-blue-300 hover:bg-slate-700/30 transition";
-        searchWebBtn.innerHTML = `Search global database for "${query}"...`;
-
-        bindClick(searchWebBtn, async (ev) => {
-            ev.preventDefault();
-            // Skeleton Loader State
-            resultsContainer.innerHTML = `
-                <div class="p-4 space-y-3">
-                    <div class="h-12 bg-slate-800/60 rounded-xl animate-pulse"></div>
-                    <div class="h-12 bg-slate-800/60 rounded-xl animate-pulse"></div>
-                </div>`;
-            cancelSearch();
-            const request = new AbortController();
-            searchRequest = request;
-            let externalResults;
-            try {
-                externalResults = await searchExternalDatabase(query, { signal: request.signal });
-            } catch (error) {
-                if (request.signal.aborted) return;
-                throw error;
-            }
-            if (request.signal.aborted || searchRequest !== request || searchInput.value !== query) return;
-            searchRequest = null;
-            resultsContainer.innerHTML = '';
-
-            if (externalResults.length === 0) {
-                resultsContainer.innerHTML = `<div class="px-5 py-4 text-sm text-slate-400 italic text-center">No results found in global database.</div>`;
-            } else {
-                externalResults.forEach(food => {
-                    resultsContainer.appendChild(createFoodButton(food, true));
-                });
-            }
-        });
-
-        resultsContainer.appendChild(searchWebBtn);
-    }
+}
+listen(searchInput, 'input', event => {
+    cancelSearch();
+    const query = event.target.value;
+    if (!query.trim()) { dropdown.classList.add('hidden'); predictivePills.classList.remove('opacity-20'); return; }
+    predictivePills.classList.add('opacity-20'); dropdown.classList.remove('hidden');
+    renderSearchResults(query);
+    if (query.trim().length >= 3 && searchFoods(query, store.get().foodDatabase, 5).length < 5) searchTimer = setTimeout(() => { void runProductSearch(query); }, 400);
+});
+listen(searchInput, 'keydown', event => {
+    if (event.key === 'Enter' && searchInput.value.trim().length >= 3) { event.preventDefault(); void runProductSearch(searchInput.value); }
 });
 
 listen(searchInput, 'focus', () => {
@@ -393,7 +392,7 @@ function renderPredictivePills() {
 
     predictivePills.innerHTML = displayList.map(r => `
         <button data-recipe-id="${r.id}" class="px-5 py-2.5 rounded-2xl bg-slate-900 border border-white/[0.05] text-sm font-medium text-slate-300 hover:bg-slate-800 hover:text-white transition shadow-sm flex items-center gap-1.5 active:scale-[0.97]">
-            <span>+ ${r.name}</span>
+            <span>+ ${escapeAttribute(r.name)}</span>
         </button>
     `).join('');
 }
@@ -436,7 +435,7 @@ function renderDailyBrief() {
         if (entry.isGroup && entry.items) {
             const nestedItemsHTML = entry.items.map(sub => `
                 <div class="flex justify-between items-center py-1.5 px-3 bg-slate-950/40 rounded-xl text-xs">
-                    <span class="text-slate-300 font-medium">${sub.name} <span class="text-slate-500 text-[11px]">(${sub.amount}${sub.unit})</span></span>
+                    <span class="text-slate-300 font-medium">${escapeAttribute(sub.name)} <span class="text-slate-500 text-[11px]">(${sub.amount}${sub.unit})</span></span>
                     <span class="text-slate-400 font-semibold tabular-nums">${sub.cal} kcal • <span class="text-blue-400">${sub.p}P</span> <span class="text-emerald-400">${sub.c}C</span> <span class="text-rose-400">${sub.f}F</span></span>
                 </div>
             `).join('');
@@ -451,7 +450,7 @@ function renderDailyBrief() {
                             <div class="text-xs font-bold text-slate-500 w-10 text-center">${entry.timestamp}</div>
                             <div>
                                 <div class="font-bold text-slate-100 text-sm flex items-center gap-2">
-                                    ${entry.name}
+                                    ${escapeAttribute(entry.name)}
                                     <span class="text-[9px] uppercase tracking-wider bg-emerald-950/60 text-emerald-400 border border-emerald-800/40 px-2 py-0.5 rounded-full font-bold">Meal Group</span>
                                 </div>
                                 <div class="text-xs text-slate-400 mt-0.5">${entry.items.length} items • ${entry.cal} kcal</div>
@@ -483,7 +482,7 @@ function renderDailyBrief() {
                 <div class="flex items-center gap-4">
                     <div class="text-xs font-bold text-slate-500 w-10 text-center">${entry.timestamp}</div>
                     <div>
-                        <div class="font-bold text-slate-200 text-sm leading-tight">${entry.name}</div>
+                        <div class="font-bold text-slate-200 text-sm leading-tight">${escapeAttribute(entry.name)}</div>
                         <div class="text-xs text-slate-400 mt-1 tabular-nums">${entry.amount} ${entry.unit} • ${entry.cal} kcal</div>
                     </div>
                 </div>
@@ -562,7 +561,7 @@ function editDiaryEntry(entryId) {
             }))
         }, entry.id);
     } else {
-        const food = entry.nutrition || store.get().foodDatabase.find(f => String(f.id) === String(entry.foodId)) || {
+        const food = entry.nutrition || findFood(entry.foodId, store.get().foodDatabase) || {
             id: entry.foodId,
             name: entry.name,
             serving: 1,
@@ -683,6 +682,7 @@ async function onScanSuccess(decodedText) {
 
         const product = data.product;
         const nutriments = product.nutriments || {};
+        if (!['energy-kcal_100g', 'proteins_100g', 'carbohydrates_100g', 'fat_100g'].every(key => nutriments[key] !== undefined && Number.isFinite(Number(nutriments[key])) && Number(nutriments[key]) >= 0)) throw new Error('Nutrition data is unavailable for this product');
 
         const scannedFood = {
             id: `off_${decodedText}`,
@@ -803,7 +803,7 @@ function setCustomModalMode(mode) {
     }
 }
 
-if (tabModeFood) bindClick(tabModeFood, () => setCustomModalMode('food'));
+if (tabModeFood) tabModeFood.hidden = true;
 if (tabModeRecipe) bindClick(tabModeRecipe, () => setCustomModalMode('recipe'));
 
 function openCustomFoodModal(itemToEdit = null, isRecipe = false) {
@@ -865,7 +865,7 @@ function closeCustomFoodModal() {
     finishClose(customFoodModal, () => customFoodModal.classList.add('hidden'));
 }
 
-if (btnOpenAddFood) bindClick(btnOpenAddFood, () => openCustomFoodModal());
+if (btnOpenAddFood) bindClick(btnOpenAddFood, () => { openCustomFoodModal(); setCustomModalMode('recipe'); });
 if (btnCloseCustomModal) bindClick(btnCloseCustomModal, closeCustomFoodModal);
 if (btnCancelCustomFood) bindClick(btnCancelCustomFood, closeCustomFoodModal);
 if (btnCancelCustomRecipe) bindClick(btnCancelCustomRecipe, closeCustomFoodModal);
@@ -918,9 +918,13 @@ const recipeFoodDropdownList = document.getElementById('recipe-food-dropdown-lis
 const recipeSelectedFoodId = document.getElementById('recipe-selected-food-id');
 const selectedRecipeFoodLabel = document.getElementById('selected-recipe-food-label');
 
-function populateIngredientPicker() {
+bindClick(document.getElementById('recipe-food-search'), event => event.stopPropagation());
+listen(document.getElementById('recipe-food-search'), 'input', event => populateIngredientPicker(event.target.value));
+
+function populateIngredientPicker(query = '') {
     if (!recipeFoodDropdownList) return;
-    const db = store.get().foodDatabase || [];
+    const saved = store.get().foodDatabase;
+    const db = query ? searchFoods(query, saved, 30) : [...saved, ...searchFoods('', saved, 30)].filter((food, index, list) => list.findIndex(other => String(other.id) === String(food.id)) === index).slice(0, 30);
 
     if (db.length === 0) {
         recipeFoodDropdownList.innerHTML = `<div class="p-3 text-xs text-slate-500 italic text-center">No foods in database.</div>`;
@@ -928,8 +932,8 @@ function populateIngredientPicker() {
     }
 
     recipeFoodDropdownList.innerHTML = db.map(f => `
-        <button type="button" data-id="${f.id}" data-name="${f.name}" class="recipe-food-opt w-full text-left px-4 py-2 hover:bg-slate-700/60 transition border-b border-slate-700/40 last:border-0 flex justify-between items-center">
-            <span class="text-xs font-bold text-slate-200 truncate">${f.name}</span>
+        <button type="button" data-id="${f.id}" data-name="${escapeAttribute(f.name)}" class="recipe-food-opt w-full text-left px-4 py-2 hover:bg-slate-700/60 transition border-b border-slate-700/40 last:border-0 flex justify-between items-center">
+            <span class="text-xs font-bold text-slate-200 truncate">${escapeAttribute(f.name)}</span>
             <span class="text-[11px] text-slate-400 ml-2 whitespace-nowrap">${f.cal} kcal (${f.serving}${f.unit || 'g'})</span>
         </button>
     `).join('');
@@ -965,7 +969,7 @@ const btnAddIngToRecipe = document.getElementById('btn-add-ing-to-recipe');
 if (btnAddIngToRecipe) {
     bindClick(btnAddIngToRecipe, () => {
         const selectedId = recipeSelectedFoodId.value;
-        const food = store.get().foodDatabase.find(f => String(f.id) === String(selectedId));
+        const food = findFood(selectedId, store.get().foodDatabase);
         if (!food) return;
 
         recipeBuilderIngredients.push({
@@ -1032,7 +1036,7 @@ function renderRecipeBuilderList() {
 
     list.innerHTML = recipeBuilderIngredients.map((item, idx) => `
         <div class="flex items-center justify-between p-2.5 bg-slate-950 rounded-xl border border-slate-800 text-xs">
-            <span class="font-bold text-slate-200 truncate flex-1">${item.name}</span>
+            <span class="font-bold text-slate-200 truncate flex-1">${escapeAttribute(item.name)}</span>
             <div class="flex items-center gap-2">
                 <input type="number" step="any" value="${item.amount}" data-builder-idx="${idx}" class="builder-ing-input w-16 bg-slate-900 border border-slate-700 rounded-lg py-1 text-center font-bold text-white focus:outline-none">
                 <button type="button" class="builder-unit select-trigger" data-builder-unit="${idx}">${escapeAttribute(item.unit === 'portion' ? 'serving' : item.unit)}</button>
@@ -1116,7 +1120,7 @@ function renderDatabaseView(filterQuery = '') {
     if (!dbListContainer) return;
     const q = filterQuery.toLowerCase().trim();
     const state = store.get();
-    const foods = (state.foodDatabase || []).map(f => ({ ...f, type: 'food' }));
+    const foods = allFoods(state.foodDatabase).map(f => ({ ...f, type: 'food' }));
     const recipes = (state.recipes || []).map(r => ({ ...r, type: 'recipe' }));
 
     let combined = [];
@@ -1131,7 +1135,7 @@ function renderDatabaseView(filterQuery = '') {
         return;
     }
 
-    dbListContainer.innerHTML = filtered.map(item => {
+    dbListContainer.innerHTML = filtered.slice(0, 60).map(item => {
         if (item.type === 'recipe') {
             let rCal = 0, rP = 0, rC = 0, rF = 0;
             (item.ingredients || []).forEach(ing => {
@@ -1147,7 +1151,7 @@ function renderDatabaseView(filterQuery = '') {
                 <div class="bg-slate-900 p-4 rounded-2xl border border-white/[0.05] flex items-center justify-between transition hover:border-slate-700">
                     <div>
                         <div class="font-bold text-slate-100 text-sm flex items-center gap-2">
-                            ${item.name}
+                            ${escapeAttribute(item.name)}
                             <span class="text-[9px] uppercase tracking-wider bg-emerald-950/60 text-emerald-400 border border-emerald-800/40 px-2 py-0.5 rounded-full font-bold">Meal</span>
                         </div>
                         <div class="text-xs text-slate-400 mt-0.5 tabular-nums">${item.ingredients.length} items • ${Math.round(rCal)} kcal • ${Math.round(rP)}P / ${Math.round(rC)}C / ${Math.round(rF)}F</div>
@@ -1173,14 +1177,14 @@ function renderDatabaseView(filterQuery = '') {
         return `
             <div class="bg-slate-900 p-4 rounded-2xl border border-white/[0.05] flex items-center justify-between transition hover:border-slate-700">
                 <div>
-                    <div class="font-bold text-slate-200 text-sm">${item.name}</div>
+                    <div class="font-bold text-slate-200 text-sm">${escapeAttribute(item.name)}</div>
                     <div class="text-xs text-slate-400 mt-0.5 tabular-nums">${item.cal} kcal • ${item.p}P / ${item.c}C / ${item.f}F <span class="text-slate-600 ml-1">(per ${item.serving}${item.unit || 'g'})</span></div>
                 </div>
                 <div class="flex items-center gap-2">
-                    <button data-action="edit-food" data-id="${item.id}" class="p-2 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white text-xs rounded-xl transition active:scale-95" title="Edit">
+                    <button data-action="edit-food" ${String(item.id).startsWith('sr_') ? 'hidden' : ''} data-id="${item.id}" class="p-2 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white text-xs rounded-xl transition active:scale-95" title="Edit">
                         <svg class="w-3.5 h-3.5 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"></path></svg>
                     </button>
-                    <button data-action="delete-food" data-id="${item.id}" class="p-2 bg-slate-800 hover:bg-rose-950/60 text-slate-400 hover:text-rose-400 text-xs rounded-xl transition active:scale-95" title="Delete">
+                    <button data-action="delete-food" ${String(item.id).startsWith('sr_') ? 'hidden' : ''} data-id="${item.id}" class="p-2 bg-slate-800 hover:bg-rose-950/60 text-slate-400 hover:text-rose-400 text-xs rounded-xl transition active:scale-95" title="Delete">
                         <svg class="w-3.5 h-3.5 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
                     </button>
                     <button data-action="log-food" data-id="${item.id}" class="px-3 py-1.5 bg-slate-800 hover:bg-blue-600 text-slate-300 hover:text-white text-xs font-bold rounded-xl transition active:scale-[0.97]">
@@ -1190,6 +1194,12 @@ function renderDatabaseView(filterQuery = '') {
             </div>
         `;
     }).join('');
+    if (filtered.length > 60) {
+        const note = document.createElement('p');
+        note.className = 'text-sm text-slate-400';
+        note.textContent = `Showing 60 of ${filtered.length} foods and meals. Narrow your search to find any item.`;
+        dbListContainer.append(note);
+    }
 }
 
 function databaseAction(e) {
@@ -1199,16 +1209,16 @@ function databaseAction(e) {
         const id = btn.getAttribute('data-id');
 
         if (action === 'edit-food') {
-            const food = store.get().foodDatabase.find(f => String(f.id) === String(id));
+            const food = findFood(id, store.get().foodDatabase);
             if (food) openCustomFoodModal(food, false);
         } else if (action === 'delete-food') {
-            const food = store.get().foodDatabase.find(f => String(f.id) === String(id));
-            if (food && confirm(`Delete "${food.name}" from your database?`)) {
+            const food = findFood(id, store.get().foodDatabase);
+            if (food && confirm(`Delete "${escapeAttribute(food.name)}" from your database?`)) {
                 store.update(draft => { draft.foodDatabase = draft.foodDatabase.filter(f => String(f.id) !== String(id)); });
 
             }
         } else if (action === 'log-food') {
-            const food = store.get().foodDatabase.find(f => String(f.id) === String(id));
+            const food = findFood(id, store.get().foodDatabase);
             if (food) {
                 switchView('view-home');
                 openModal(food);
@@ -1312,7 +1322,7 @@ function renderRecipeIngredients() {
         return `
             <div class="bg-slate-950/80 p-3 rounded-2xl border border-white/[0.05] flex items-center justify-between gap-3">
                 <div class="flex-1 min-w-0">
-                    <div class="font-bold text-white text-sm truncate">${item.name}</div>
+                    <div class="font-bold text-white text-sm truncate">${escapeAttribute(item.name)}</div>
                     <div class="text-[11px] text-slate-500 tabular-nums">${item.cal} kcal / ${item.baseServing}${baseUnit}</div>
                 </div>
                 <div class="flex items-center gap-2">
@@ -1352,10 +1362,9 @@ function removeTunerIngredient(idx) {
     renderRecipeIngredients();
 };
 
-if (btnTunerAddTrigger) {
-    bindClick(btnTunerAddTrigger, (e) => {
-        e.stopPropagation();
-        const db = store.get().foodDatabase || [];
+function renderTunerPicker(query = '') {
+        const saved = store.get().foodDatabase;
+        const db = query ? searchFoods(query, saved, 30) : [...saved, ...searchFoods('', saved, 30)].slice(0, 30);
         if (!tunerFoodDropdownList) return;
 
         if (db.length === 0) {
@@ -1363,11 +1372,18 @@ if (btnTunerAddTrigger) {
         } else {
             tunerFoodDropdownList.innerHTML = db.map(f => `
                 <button type="button" data-id="${f.id}" class="tuner-add-food-opt w-full text-left px-4 py-2 hover:bg-slate-700/60 transition border-b border-slate-700/40 last:border-0 flex justify-between items-center text-xs">
-                    <span class="font-bold text-slate-200 truncate">${f.name}</span>
+                    <span class="font-bold text-slate-200 truncate">${escapeAttribute(f.name)}</span>
                     <span class="text-slate-400 ml-2 whitespace-nowrap">${f.cal} kcal (${f.serving}${f.unit || 'g'})</span>
                 </button>
             `).join('');
         }
+}
+bindClick(document.getElementById('tuner-food-search'), event => event.stopPropagation());
+listen(document.getElementById('tuner-food-search'), 'input', event => renderTunerPicker(event.target.value));
+if (btnTunerAddTrigger) {
+    bindClick(btnTunerAddTrigger, event => {
+        event.stopPropagation();
+        renderTunerPicker();
         tunerFoodDropdown.classList.toggle('hidden');
     });
 }
@@ -1377,7 +1393,7 @@ if (tunerFoodDropdownList) {
         const btn = e.target.closest('.tuner-add-food-opt');
         if (!btn || !activeRecipe) return;
         const id = btn.getAttribute('data-id');
-        const food = store.get().foodDatabase.find(f => String(f.id) === String(id));
+        const food = findFood(id, store.get().foodDatabase);
         if (food) {
             activeRecipe.ingredients.push({
                 id: food.id,
@@ -1521,7 +1537,8 @@ listen(globalThis, 'account-changing', () => {
     cancelSearch(); selects.close(); closeModal(); closeRecipeModal(); closeCustomFoodModal();
     void stopScanner().catch(error => console.error(error));
 });
-void initializeAccount(bindClick, lifetime.signal, selects);
+const dialogs = initializeDialogs(bindClick, lifetime.signal, selects);
+void initializeAccount(bindClick, lifetime.signal, selects, dialogs);
 
 // 14. Initial App Boot
 renderPredictivePills();

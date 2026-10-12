@@ -117,7 +117,7 @@ export function createDashboard(root) {
             if (!['rings', 'bars', 'minimal'].includes(view)) throw new RangeError('Unknown dashboard view');
             for (const key of ['cal', 'p', 'c', 'f']) {
                 text(`total-${key}`, number(totals[key]));
-                text(`target-${key}`, number(targets[key]));
+                text(`target-${key}`, Number(number(targets[key]).toFixed(1)));
             }
             const remaining = number(targets.cal) - number(totals.cal);
             text('difference', Math.abs(remaining));

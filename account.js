@@ -2,9 +2,11 @@ import { store, exportUserData, importUserData } from './state.js';
 import { deviceCache } from './persistence.js';
 import { firebaseConfig } from './firebase-config.js';
 import { createCloudSync } from './cloud-sync.js';
+import { dashboardContext } from './dashboard-context.js';
+import { initializeNutritionUI } from './onboarding.js';
 import { localDateString } from './local-date.js';
 
-export async function initializeAccount(bindClick, signal, selects) {
+export async function initializeAccount(bindClick, signal, selects, dialogs) {
     const account = document.getElementById('account-panel');
     const status = document.getElementById('cloud-status');
     const statusLabel = document.getElementById('storage-label');
@@ -18,13 +20,26 @@ export async function initializeAccount(bindClick, signal, selects) {
     let adapter;
     let sync;
     let currentPhase = 'guest';
+    let signedInUser = null;
+    function renderGreeting() {
+        const context = dashboardContext(store.get().profile, signedInUser);
+        document.getElementById('dashboard-greeting').textContent = context.greeting;
+        document.getElementById('dashboard-prompt').textContent = context.prompt;
+    }
+    const contextTimer = setInterval(renderGreeting, 60_000);
+    signal.addEventListener('abort', () => clearInterval(contextTimer), { once: true });
+    document.addEventListener('visibilitychange', renderGreeting, { signal });
     function report({ phase, user, error }) {
         currentPhase = phase;
+        signedInUser = user || null;
+        renderGreeting();
         const loading = ['loading', 'load-error'].includes(phase);
         dataViews.inert = loading;
         dataViews.style.visibility = loading ? 'hidden' : '';
         document.getElementById('btn-export-backup').disabled = loading;
         document.getElementById('backup-import').disabled = loading;
+        for (const section of document.querySelectorAll('[data-dialog-view=profile], [data-dialog-view=settings], [data-dialog-view=onboarding]')) section.inert = loading;
+        for (const button of document.querySelectorAll('[data-dialog-tab=profile], [data-dialog-tab=settings], #btn-start-onboarding')) button.disabled = loading;
         // Remove any open editor's detached draft when changing accounts.
         if (phase === 'loading') globalThis.dispatchEvent(new Event('account-changing'));
         const messages = {
@@ -32,11 +47,14 @@ export async function initializeAccount(bindClick, signal, selects) {
             loading: 'Loading your account…', synced: 'Backed up to your account.',
             saving: 'Backing up changes…', pending: 'Cloud backup pending. Keep this device copy until backup completes.',
             conflict: 'Another device changed this data. Export your device copy before reloading the cloud copy.',
-            'load-error': 'Your account could not be loaded. Retry or sign out to use the device diary.'
+            'load-error': 'You are signed in, but your diary could not be loaded. Retry loading your account or export an existing device backup.'
         };
         status.textContent = phase === 'pending' && error?.code === 'permission-denied'
             ? 'Cloud backup is not allowed for this account. Changes remain on this device.'
-            : messages[phase] || error?.message || phase;
+            : phase === 'load-error' && error?.code === 'permission-denied'
+                ? 'Sign-in succeeded. This account cannot access its diary yet. Check its Firestore access rules.'
+                : phase === 'load-error' && error?.code === 'sync/invalid-data' ? error.message
+                : messages[phase] || error?.message || phase;
         statusLabel.textContent = phase === 'synced' ? 'Cloud backed up' : phase === 'guest' ? 'Device only' : 'Backup pending';
         account.querySelector('[data-user-email]').textContent = user?.email || '';
         authForm.hidden = !!user;
@@ -52,6 +70,10 @@ export async function initializeAccount(bindClick, signal, selects) {
             'auth/operation-not-allowed': 'This sign-in method must be enabled in Firebase Authentication.',
             'auth/unauthorized-domain': 'This website must be added to Firebase Authentication authorized domains.',
             'auth/popup-blocked': 'Allow the Google sign-in popup and try again.',
+            'auth/account-exists-with-different-credential': 'This email already uses another sign-in method. Sign in with that method to link Google securely.',
+            'auth/user-disabled': 'This account has been disabled. Contact the app owner.',
+            'auth/too-many-requests': 'Sign-in is temporarily limited. Wait a little and try again.',
+            'auth/credential-already-in-use': 'This Google identity belongs to another account. Sign in with that identity; accounts were not merged.',
             'auth/network-request-failed': 'Unable to reach sign-in. Check your connection and try again.'
         };
         status.textContent = messages[error.code] || error.message || 'The action could not be completed.';
@@ -68,12 +90,18 @@ export async function initializeAccount(bindClick, signal, selects) {
         if (authForm.reportValidity()) return authAction((email, password) => adapter.signUp(email, password));
     });
     bindClick(document.getElementById('btn-google-sign-in'), () => authAction(() => adapter.google()));
+    bindClick(document.getElementById('btn-reset-password'), async () => {
+        const email = authForm.elements.email.value.trim();
+        if (!email || !authForm.elements.email.checkValidity()) { authForm.elements.email.reportValidity(); return; }
+        try { await adapter.resetPassword(email); status.textContent = 'If this email supports password sign-in, reset instructions will arrive in your inbox.'; }
+        catch (error) { errorMessage(error); }
+    });
     bindClick(signOut, async () => {
         try { await deviceCache.flush(); await adapter.signOut(); }
         catch (error) { errorMessage(error); }
     });
     bindClick(retry, async () => {
-        if (currentPhase === 'load-error') { location.reload(); return; }
+        if (currentPhase === 'load-error') { await sync.retryLoad(); return; }
         await sync.flush();
     });
     bindClick(reload, async () => {
@@ -101,6 +129,9 @@ export async function initializeAccount(bindClick, signal, selects) {
         options: [{ value: 'kg', label: 'Kilograms (kg)' }, { value: 'lb', label: 'Pounds (lb)' }],
         getValue: () => profileForm.elements.weightUnit.value,
         onChange: value => {
+            const previous = profileForm.elements.weightUnit.value;
+            const goal = Number(profileForm.elements.goalWeight.value);
+            if (goal && previous !== value) profileForm.elements.goalWeight.value = Number((goal * (value === 'lb' ? 1 / 0.45359237 : 0.45359237)).toFixed(2));
             profileForm.elements.weightUnit.value = value;
             weightUnitButton.textContent = value === 'kg' ? 'Kilograms (kg)' : 'Pounds (lb)';
         }, label: 'Weight unit'
@@ -116,12 +147,13 @@ export async function initializeAccount(bindClick, signal, selects) {
             profileForm.elements.goalWeight.value = state.settings.goalWeight || '';
             profileForm.elements.weightUnit.value = state.profile?.weightUnit || 'kg';
             weightUnitButton.textContent = profileForm.elements.weightUnit.value === 'kg' ? 'Kilograms (kg)' : 'Pounds (lb)';
+            document.getElementById('onboarding-card').hidden = !!state.settings.onboardingComplete;
             document.getElementById('onboarding-status').textContent = state.settings.onboardingComplete ? 'Profile set up' : 'Set up your profile and daily goals to get started.';
             previousProfile = profileKey;
         }
         const targetKey = JSON.stringify(state.targets);
         if (targetKey !== previousTargets) {
-            for (const key of ['cal', 'p', 'c', 'f']) goalForm.elements[key].value = state.targets[key];
+            for (const key of ['cal', 'p', 'c', 'f']) goalForm.elements[key].value = Number(state.targets[key].toFixed(3));
             previousTargets = targetKey;
         }
         const weightKey = JSON.stringify(state.weightLog);
@@ -138,15 +170,15 @@ export async function initializeAccount(bindClick, signal, selects) {
     profileForm.addEventListener('submit', event => {
         event.preventDefault();
         store.update(draft => {
+            const previousUnit = draft.profile?.weightUnit || 'kg';
+            const nextUnit = profileForm.elements.weightUnit.value;
+            const currentWeight = draft.profile?.currentWeight;
             draft.profile = { ...draft.profile, displayName: profileForm.elements.displayName.value.trim(),
-                heightCm: Number(profileForm.elements.heightCm.value) || null, weightUnit: profileForm.elements.weightUnit.value };
+                heightCm: Number(profileForm.elements.heightCm.value) || null, weightUnit: nextUnit };
+            if (currentWeight && previousUnit !== nextUnit) draft.profile.currentWeight = currentWeight * (nextUnit === 'lb' ? 1 / 0.45359237 : 0.45359237);
             draft.settings.goalWeight = Number(profileForm.elements.goalWeight.value) || 0;
-            draft.settings.onboardingComplete = true;
+
         });
-    }, { signal });
-    goalForm.addEventListener('submit', event => {
-        event.preventDefault();
-        store.update(draft => { for (const key of ['cal', 'p', 'c', 'f']) draft.targets[key] = Number(goalForm.elements[key].value); });
     }, { signal });
     weightForm.elements.date.value = localDateString();
     weightForm.addEventListener('submit', event => {
@@ -154,11 +186,16 @@ export async function initializeAccount(bindClick, signal, selects) {
         const timestamp = new Date(`${weightForm.elements.date.value}T12:00:00`).toISOString();
         const value = Number(weightForm.elements.value.value);
         if (!(value > 0 && value < 2000)) return;
-        store.update(draft => { draft.weightLog.push({ id: crypto.randomUUID(), timestamp, value, unit: draft.profile?.weightUnit || 'kg' }); });
+        store.update(draft => {
+            draft.weightLog.push({ id: crypto.randomUUID(), timestamp, value, unit: draft.profile?.weightUnit || 'kg' });
+            draft.profile.currentWeight = value;
+        });
         weightForm.elements.value.value = '';
     }, { signal });
+    initializeNutritionUI(bindClick, signal, selects, dialogs);
     render(store.get());
-    const unsubscribe = store.subscribe(render);
+    renderGreeting();
+    const unsubscribe = store.subscribe(state => { render(state); renderGreeting(); });
     signal.addEventListener('abort', () => { sync?.destroy(); unsubscribe(); }, { once: true });
     report({ phase: 'guest' });
     const config = globalThis.MACROTRACKER_FIREBASE_CONFIG || firebaseConfig;

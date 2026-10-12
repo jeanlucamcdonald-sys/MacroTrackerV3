@@ -9,11 +9,15 @@ service cloud.firestore {
         && value.c is number && value.c >= 0 && value.c <= 100000
         && value.f is number && value.f >= 0 && value.f <= 100000;
     }
+    function targets(value) {
+      return macros(value) && value.cal - (4 * value.p + 4 * value.c + 9 * value.f) < 0.001
+        && (4 * value.p + 4 * value.c + 9 * value.f) - value.cal < 0.001;
+    }
     match /users/{uid}/profile/current {
       allow read: if owner(uid);
       allow create, update: if owner(uid) && request.resource.data.keys().hasOnly(['version', 'profile', 'settings', 'targets', '_revision'])
         && request.resource.data.profile is map && request.resource.data.settings is map
-        && request.resource.data.version is string && macros(request.resource.data.targets)
+        && request.resource.data.version is string && targets(request.resource.data.targets)
         && request.resource.data._revision is int && request.resource.data._revision > 0;
       allow delete: if owner(uid);
     }

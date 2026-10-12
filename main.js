@@ -5,7 +5,9 @@ import { localDateString, watchLocalDay } from './local-date.js';
 import { createSelectSystem } from './select-widget.js';
 import { loadCatalog, allFoods, findFood, searchFoods } from './product-catalog.js';
 import { searchProducts } from './product-search.js';
+import { emptyMacros, summarizePeriod } from './history-model.js';
 
+document.documentElement.dataset.accountPhase = 'loading';
 const lifetime = new AbortController();
 const clickHandlers = new WeakMap();
 function bindClick(element, handler) {
@@ -24,9 +26,9 @@ function initializeSafely(name, initialize, fallback) {
 }
 const router = createRouter({
     ui: ({ event, element }) => clickHandlers.get(element)?.(event),
-    'toggle-group': ({ id }) => toggleGroupAccordion(id),
-    'edit-diary-entry': ({ id }) => editDiaryEntry(id),
-    'delete-diary-entry': ({ id }) => deleteDiaryEntry(id),
+    'toggle-group': ({ id, element }) => toggleGroupAccordion(`${element.dataset.date}_${id}`),
+    'edit-diary-entry': ({ id, element }) => editDiaryEntry(id, element.dataset.date),
+    'delete-diary-entry': ({ id, element }) => deleteDiaryEntry(id, element.dataset.date),
     'remove-builder-ingredient': ({ id }) => removeBuilderIng(Number(id)),
     'remove-tuner-ingredient': ({ id }) => removeTunerIngredient(Number(id)),
     ...Object.fromEntries(['edit-food', 'delete-food', 'log-food', 'pin', 'edit-recipe', 'delete-recipe', 'log-recipe']
@@ -105,6 +107,8 @@ void dialogReady.then(dialogs => {
     void import('./account.js')
         .then(({ initializeAccount }) => { if (!lifetime.signal.aborted) return initializeAccount(bindClick, lifetime.signal, selects, dialogs); })
         .catch(error => {
+            document.documentElement.dataset.accountPhase = 'load-error';
+            document.getElementById('backup-import').disabled = true;
             console.warn('Account initialization failed:', error);
             document.getElementById('cloud-status').textContent = 'Account controls could not initialize. Reload to retry; your device diary is still available.';
         });
@@ -167,6 +171,20 @@ let activeDiaryEntryId = null;
 let activeDiaryDate = null;
 let activeRecipeDate = null;
 let currentDashboardView = 'rings';
+let editorOpenedDay = null;
+let historyView = { selection: () => ({ anchor: localDateString(), period: 'day', format: 'timeline' }), render: state => summarizePeriod(state, localDateString(), 'day'), rollover() {} };
+let weights = { render() {}, rollover() {} };
+void import('./history-ui.js').then(({ initializeHistory }) => {
+    if (lifetime.signal.aborted) return;
+    historyView = initializeHistory(bindClick, lifetime.signal, renderDailyBrief); renderDailyBrief();
+}).catch(error => console.warn('History controls unavailable:', error));
+void import('./weight-ui.js').then(({ initializeWeights }) => {
+    if (lifetime.signal.aborted) return;
+    weights = initializeWeights(bindClick, lifetime.signal, () => historyView.selection());
+}).catch(error => console.warn('Weight controls unavailable:', error));
+void import('./backup-ui.js').then(({ initializeBackups }) => {
+    if (!lifetime.signal.aborted) initializeBackups(bindClick, lifetime.signal);
+}).catch(error => console.warn('Backup controls unavailable:', error));
 let dashboard = { update() {} };
 void import('./dashboard.js').then(({ createDashboard }) => {
     if (lifetime.signal.aborted) return;
@@ -183,11 +201,12 @@ function fuzzyMatch(foodName, query) {
 }
 
 // 5. Single Food Logging Modal
-function openModal(food, existingEntryId = null) {
+function openModal(food, existingEntryId = null, date = getLocalDateString()) {
     cancelClose(modal);
     activeFoodToLog = food;
     activeDiaryEntryId = existingEntryId;
-    activeDiaryDate = getLocalDateString();
+    activeDiaryDate = date;
+    editorOpenedDay = getLocalDateString();
     modalName.textContent = food.name;
     const baseUnit = food.unit || 'g';
     modalBase.textContent = `${food.serving}${baseUnit}`;
@@ -207,7 +226,7 @@ function openModal(food, existingEntryId = null) {
         options, getValue: () => selectedUnit, onChange: selectUnit, label: 'Food logging unit'
     });
     selectUnit('portion');
-    const existing = store.get().logs[getLocalDateString().slice(0, 7)]?.[getLocalDateString()]?.diary.find(entry => entry.id === existingEntryId);
+    const existing = store.get().logs[date.slice(0, 7)]?.[date]?.diary.find(entry => entry.id === existingEntryId);
     if (existing) {
         const key = existing.unitKey || (existing.unit.startsWith('serving') ? 'portion' : existing.unit);
         if (options.some(option => option.value === key)) selectUnit(key);
@@ -236,7 +255,7 @@ function closeModal() {
 
 function updateModalMacros() {
     if (!activeFoodToLog) return;
-    if (activeDiaryEntryId && activeDiaryDate !== getLocalDateString()) { closeModal(); renderDailyBrief(); return; }
+    if (activeDiaryEntryId && editorOpenedDay !== getLocalDateString()) { closeModal(); renderDailyBrief(); return; }
     const servings = parseFloat(modalInput.value) || 0;
     const unitScale = parseFloat(modalUnitScaleValue.value) || 0;
     const totalScale = servings * unitScale;
@@ -249,14 +268,14 @@ function updateModalMacros() {
 
 function logFoodToState() {
     if (!activeFoodToLog) return;
-    if (activeDiaryEntryId && activeDiaryDate !== getLocalDateString()) { closeModal(); renderDailyBrief(); return; }
+    if (activeDiaryEntryId && editorOpenedDay !== getLocalDateString()) { closeModal(); renderDailyBrief(); return; }
     const servings = parseFloat(modalInput.value) || 0;
     const unitScale = parseFloat(modalUnitScaleValue.value) || 0;
     const totalScale = servings * unitScale;
     const selectedUnitKey = modalUnitLabelValue.value;
     const selectedUnitText = selectedUnitKey === 'portion' ? 'serving' : selectedUnitKey;
 
-    const today = getLocalDateString();
+    const today = activeDiaryEntryId ? activeDiaryDate : getLocalDateString();
     const monthKey = today.substring(0, 7);
 
     store.update(draft => {
@@ -443,29 +462,33 @@ if (predictivePills) {
 
 // 8. Render Dashboard & Chronological Log
 function renderDailyBrief() {
-    const today = getLocalDateString();
-    const monthKey = today.substring(0, 7);
     const state = store.get();
-    const dayLog = state.logs[monthKey]?.[today] || { totals: { cal: 0, p: 0, c: 0, f: 0 }, diary: [] };
-    const targets = state.targets;
-
-    dashboard.update(dayLog.totals, targets, currentDashboardView);
-
-    // Render Diary Log (Elevated Empty State)
+    const summary = historyView.render(state);
+    const { anchor, period } = historyView.selection();
+    const totals = period === 'day' ? summary.days[0].totals : Object.fromEntries(Object.entries(summary.averages).map(([key, value]) => [key, Number(value.toFixed(1))]));
+    dashboard.update(totals, state.targets, currentDashboardView);
+    weights.render();
     const logContainer = document.getElementById('daily-log-container');
+    if (period === 'day') {
+        logContainer.innerHTML = diaryMarkup(state.logs[anchor.slice(0, 7)]?.[anchor] || { totals: emptyMacros(), diary: [] }, anchor);
+    } else {
+        logContainer.innerHTML = summary.days.filter(day => day.logged).map(day => `<section data-log-date="${day.date}"><h3 class="timeline-date">${day.date} · ${Number(day.totals.cal.toFixed(1))} kcal · ${day.totals.p}g P / ${day.totals.c}g C / ${day.totals.f}g F</h3>${diaryMarkup(day.log, day.date)}</section>`).join('') || '<p class="account-card muted">No food entries in this period. Missing days are not counted as zero intake.</p>';
+    }
+}
+function diaryMarkup(dayLog, date) {
+    // Render Diary Log (Elevated Empty State)
     if (dayLog.diary.length === 0) {
-        logContainer.innerHTML = `
+        return `
             <div class="bg-slate-900/50 p-8 rounded-3xl border border-dashed border-slate-800 flex flex-col items-center justify-center gap-3">
                 <svg class="w-10 h-10 text-slate-700" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
                 <span class="text-slate-500 text-sm font-medium">Your daily log is empty</span>
                 <span class="text-slate-600 text-xs">Search, scan, or pick a meal pill above</span>
             </div>`;
-        return;
     }
 
     const sortedDiary = [...dayLog.diary].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
 
-    logContainer.innerHTML = sortedDiary.map(entry => {
+    return sortedDiary.map(entry => {
         if (entry.isGroup && entry.items) {
             const nestedItemsHTML = entry.items.map(sub => `
                 <div class="flex justify-between items-center py-1.5 px-3 bg-slate-950/40 rounded-xl text-xs">
@@ -476,12 +499,12 @@ function renderDailyBrief() {
 
             return `
                 <div class="bg-slate-900 rounded-2xl border border-white/[0.05] overflow-hidden transition group hover:border-slate-700">
-                    <div class="p-4 flex items-center justify-between cursor-pointer select-none" data-action="toggle-group" data-id="${escapeAttribute(entry.id)}">
+                    <div class="p-4 flex items-center justify-between cursor-pointer select-none" data-action="toggle-group" data-id="${escapeAttribute(entry.id)}" data-date="${date}">
                         <div class="flex items-center gap-3">
-                            <span id="chevron-${entry.id}" class="text-slate-500 transition-transform duration-200">
+                            <span id="chevron-${date}_${escapeAttribute(entry.id)}" class="text-slate-500 transition-transform duration-200">
                                 <svg class="w-4 h-4 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path></svg>
                             </span>
-                            <div class="text-xs font-bold text-slate-500 w-10 text-center">${entry.timestamp}</div>
+                            <div class="text-xs font-bold text-slate-500 w-10 text-center">${escapeAttribute(entry.timestamp)}</div>
                             <div>
                                 <div class="font-bold text-slate-100 text-sm flex items-center gap-2">
                                     ${escapeAttribute(entry.name)}
@@ -496,15 +519,15 @@ function renderDailyBrief() {
                                 <span class="text-emerald-400">${entry.c} C</span>
                                 <span class="text-rose-400">${entry.f} F</span>
                             </div>
-                            <button data-action="edit-diary-entry" data-id="${escapeAttribute(entry.id)}" class="p-2 text-slate-500 hover:text-white hover:bg-slate-800 rounded-xl transition active:scale-95" title="Edit Meal">
+                            <button data-action="edit-diary-entry" data-id="${escapeAttribute(entry.id)}" data-date="${date}" class="p-2 text-slate-500 hover:text-white hover:bg-slate-800 rounded-xl transition active:scale-95" title="Edit Meal">
                                 <svg class="w-3.5 h-3.5 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"></path></svg>
                             </button>
-                            <button data-action="delete-diary-entry" data-id="${escapeAttribute(entry.id)}" class="p-2 text-slate-500 hover:text-rose-400 hover:bg-slate-800 rounded-xl transition active:scale-95" title="Delete">
+                            <button data-action="delete-diary-entry" data-id="${escapeAttribute(entry.id)}" data-date="${date}" class="p-2 text-slate-500 hover:text-rose-400 hover:bg-slate-800 rounded-xl transition active:scale-95" title="Delete">
                                 <svg class="w-3.5 h-3.5 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
                             </button>
                         </div>
                     </div>
-                    <div id="drawer-${entry.id}" class="hidden px-4 pb-4 pt-1 space-y-1.5 border-t border-slate-800/50">
+                    <div id="drawer-${date}_${escapeAttribute(entry.id)}" class="hidden px-4 pb-4 pt-1 space-y-1.5 border-t border-slate-800/50">
                         ${nestedItemsHTML}
                     </div>
                 </div>
@@ -514,7 +537,7 @@ function renderDailyBrief() {
         return `
             <div class="bg-slate-900 p-4 rounded-2xl border border-white/[0.05] flex items-center justify-between group transition hover:border-slate-700">
                 <div class="flex items-center gap-4">
-                    <div class="text-xs font-bold text-slate-500 w-10 text-center">${entry.timestamp}</div>
+                    <div class="text-xs font-bold text-slate-500 w-10 text-center">${escapeAttribute(entry.timestamp)}</div>
                     <div>
                         <div class="font-bold text-slate-200 text-sm leading-tight">${escapeAttribute(entry.name)}</div>
                         <div class="text-xs text-slate-400 mt-1 tabular-nums">${entry.amount} ${entry.unit} • ${entry.cal} kcal</div>
@@ -526,10 +549,10 @@ function renderDailyBrief() {
                         <span class="text-emerald-400">${entry.c} C</span>
                         <span class="text-rose-400">${entry.f} F</span>
                     </div>
-                    <button data-action="edit-diary-entry" data-id="${escapeAttribute(entry.id)}" class="p-2 text-slate-500 hover:text-white hover:bg-slate-800 rounded-xl transition active:scale-95" title="Edit Amount">
+                    <button data-action="edit-diary-entry" data-id="${escapeAttribute(entry.id)}" data-date="${date}" class="p-2 text-slate-500 hover:text-white hover:bg-slate-800 rounded-xl transition active:scale-95" title="Edit Amount">
                         <svg class="w-3.5 h-3.5 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"></path></svg>
                     </button>
-                    <button data-action="delete-diary-entry" data-id="${escapeAttribute(entry.id)}" class="p-2 text-slate-500 hover:text-rose-400 hover:bg-slate-800 rounded-xl transition active:scale-95" title="Delete">
+                    <button data-action="delete-diary-entry" data-id="${escapeAttribute(entry.id)}" data-date="${date}" class="p-2 text-slate-500 hover:text-rose-400 hover:bg-slate-800 rounded-xl transition active:scale-95" title="Delete">
                         <svg class="w-3.5 h-3.5 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
                     </button>
                 </div>
@@ -547,8 +570,8 @@ function toggleGroupAccordion(id) {
     }
 };
 
-function deleteDiaryEntry(entryId) {
-    const today = getLocalDateString();
+function deleteDiaryEntry(entryId, date = getLocalDateString()) {
+    const today = date;
     const monthKey = today.substring(0, 7);
     store.update(draft => {
         const dayLog = draft.logs[monthKey]?.[today];
@@ -568,8 +591,8 @@ function deleteDiaryEntry(entryId) {
 
 };
 
-function editDiaryEntry(entryId) {
-    const today = getLocalDateString();
+function editDiaryEntry(entryId, date = getLocalDateString()) {
+    const today = date;
     const monthKey = today.substring(0, 7);
     const dayLog = store.get().logs[monthKey]?.[today];
     if (!dayLog) return;
@@ -593,7 +616,7 @@ function editDiaryEntry(entryId) {
                 baseServing: it.amount,
                 baseUnit: it.unit === 'portion' ? 'serving' : it.unit
             }))
-        }, entry.id);
+        }, entry.id, date);
     } else {
         const food = entry.nutrition || findFood(entry.foodId, store.get().foodDatabase) || {
             id: entry.foodId,
@@ -605,7 +628,7 @@ function editDiaryEntry(entryId) {
             c: entry.c,
             f: entry.f
         };
-        openModal(food, entry.id);
+        openModal(food, entry.id, date);
         modalInput.value = entry.amount;
         updateModalMacros();
     }
@@ -760,14 +783,20 @@ const btnMenu = document.getElementById('btn-menu');
 const btnCloseDrawer = document.getElementById('btn-close-drawer');
 
 function openDrawer() {
+    drawerPanel.inert = false; drawerPanel.setAttribute('aria-hidden', 'false');
     cancelClose(drawerContainer);
     drawerContainer.classList.remove('pointer-events-none');
     drawerBackdrop.classList.remove('opacity-0', 'pointer-events-none');
     drawerPanel.classList.remove('translate-x-full');
     drawerPanel.classList.add('translate-x-0');
+    btnMenu.setAttribute('aria-expanded', 'true');
+    btnCloseDrawer.focus({ preventScroll: true });
 }
 
 function closeDrawer() {
+    if (drawerPanel.contains(document.activeElement)) btnMenu.focus({ preventScroll: true });
+    drawerPanel.inert = true; drawerPanel.setAttribute('aria-hidden', 'true');
+    btnMenu.setAttribute('aria-expanded', 'false');
     selects.close();
     drawerBackdrop.classList.add('opacity-0', 'pointer-events-none');
     drawerPanel.classList.remove('translate-x-0');
@@ -779,7 +808,11 @@ bindClick(btnMenu, (e) => { e.stopPropagation(); openDrawer(); });
 bindClick(btnCloseDrawer, (e) => { e.stopPropagation(); closeDrawer(); });
 bindClick(drawerBackdrop, closeDrawer);
 
+let currentAppView = 'view-home';
+let settingsReturn = { view: 'view-home', scroll: 0 };
 function switchView(targetViewId) {
+    if (targetViewId === 'view-settings' && currentAppView !== 'view-settings') settingsReturn = { view: currentAppView, scroll: document.querySelector('main').scrollTop };
+    currentAppView = targetViewId;
     document.querySelectorAll('.app-view').forEach(view => view.classList.add('hidden'));
     const target = document.getElementById(targetViewId);
     if (target) target.classList.remove('hidden');
@@ -800,8 +833,30 @@ function switchView(targetViewId) {
 document.querySelectorAll('.drawer-nav-item').forEach(item => {
     bindClick(item, () => {
         const viewId = item.getAttribute('data-nav');
-        if (viewId) switchView(viewId);
+        if (item.dataset.settingsTarget) openSettings(item.dataset.settingsTarget);
+        else if (viewId) switchView(viewId);
     });
+});
+
+function openSettings(section = 'account') {
+    switchView('view-settings');
+    const target = document.getElementById(`settings-${section}`) || document.getElementById('settings-account');
+    target.scrollIntoView({ block: 'start' }); target.querySelector('h2').focus({ preventScroll: true });
+}
+listen(globalThis, 'navigate-settings', event => openSettings(event.detail.section));
+listen(globalThis, 'navigate-home', () => switchView('view-home'));
+listen(globalThis, 'navigate-weight', () => switchView('view-weight'));
+bindClick(document.getElementById('btn-settings-back'), () => {
+    switchView(settingsReturn.view); document.querySelector('main').scrollTop = settingsReturn.scroll;
+    btnMenu.focus({ preventScroll: true });
+});
+listen(drawerPanel, 'keydown', event => {
+    if (event.key === 'Escape') { closeDrawer(); btnMenu.focus(); }
+    if (event.key === 'Tab') {
+        const buttons = [...drawerPanel.querySelectorAll('button')].filter(button => !button.disabled && button.getClientRects().length);
+        if (event.shiftKey && document.activeElement === buttons[0]) { event.preventDefault(); buttons.at(-1).focus(); }
+        else if (!event.shiftKey && document.activeElement === buttons.at(-1)) { event.preventDefault(); buttons[0].focus(); }
+    }
 });
 
 // 11. Custom Food & Recipe Builder Engine
@@ -1302,11 +1357,12 @@ const btnTunerAddTrigger = document.getElementById('btn-tuner-add-trigger');
 const tunerFoodDropdown = document.getElementById('tuner-food-dropdown');
 const tunerFoodDropdownList = document.getElementById('tuner-food-dropdown-list');
 
-function openRecipeModal(recipe, existingLogEntryId = null) {
+function openRecipeModal(recipe, existingLogEntryId = null, date = getLocalDateString()) {
     cancelClose(recipeModal);
     activeRecipe = JSON.parse(JSON.stringify(recipe));
     activeRecipeLogEntryId = existingLogEntryId;
-    activeRecipeDate = getLocalDateString();
+    activeRecipeDate = date;
+    editorOpenedDay = getLocalDateString();
     recipeModalName.textContent = activeRecipe.name;
     btnConfirmRecipe.textContent = existingLogEntryId ? 'Update Meal Log' : 'Log Meal Group';
     if (tunerFoodDropdown) tunerFoodDropdown.classList.add('hidden');
@@ -1453,8 +1509,8 @@ if (recipeBackdrop) bindClick(recipeBackdrop, closeRecipeModal);
 if (btnConfirmRecipe) {
     bindClick(btnConfirmRecipe, () => {
         if (!activeRecipe) return;
-        if (activeRecipeLogEntryId && activeRecipeDate !== getLocalDateString()) { closeRecipeModal(); renderDailyBrief(); return; }
-        const today = getLocalDateString();
+        if (activeRecipeLogEntryId && editorOpenedDay !== getLocalDateString()) { closeRecipeModal(); renderDailyBrief(); return; }
+        const today = activeRecipeLogEntryId ? activeRecipeDate : getLocalDateString();
         const monthKey = today.substring(0, 7);
         const timeNow = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
 
@@ -1540,16 +1596,14 @@ let lastRenderedState = store.get();
 const unsubscribe = store.subscribe(state => {
     const recipesChanged = JSON.stringify(state.recipes) !== JSON.stringify(lastRenderedState.recipes);
     const foodsChanged = JSON.stringify(state.foodDatabase) !== JSON.stringify(lastRenderedState.foodDatabase);
-    const day = getLocalDateString();
-    const previousDay = lastRenderedState.logs[day.slice(0, 7)]?.[day];
-    const nextDay = state.logs[day.slice(0, 7)]?.[day];
     if (recipesChanged) renderPredictivePills();
-    if (JSON.stringify(previousDay) !== JSON.stringify(nextDay) || JSON.stringify(state.targets) !== JSON.stringify(lastRenderedState.targets)) renderDailyBrief();
+    if (JSON.stringify(state.logs) !== JSON.stringify(lastRenderedState.logs) || JSON.stringify(state.targets) !== JSON.stringify(lastRenderedState.targets)) renderDailyBrief();
     if ((recipesChanged || foodsChanged) && !document.getElementById('view-database').classList.contains('hidden')) renderDatabaseView(dbFilterInput?.value || '');
     lastRenderedState = state;
 });
 
-const stopDayWatcher = watchLocalDay(() => {
+const stopDayWatcher = watchLocalDay(date => {
+    historyView.rollover(date); weights.rollover();
     // An edit opened yesterday must never silently target today's diary.
     if (activeDiaryEntryId) closeModal();
     if (activeRecipeLogEntryId) closeRecipeModal();

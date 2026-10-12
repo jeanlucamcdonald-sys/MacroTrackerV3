@@ -21,16 +21,16 @@ test('Account and plan setup work before a slow catalog resolves; typed search r
         await page.route('**/data/foods.json', async route => { await pending; await route.continue(); });
         try {
             await page.goto(baseURL);
-            await page.locator('#btn-account').click();
+            await page.locator('#btn-menu').click(); await page.locator('#btn-account').click();
+            assert.equal(await page.locator('#view-settings').isVisible(), true);
+            await page.locator('#btn-settings-back').click();
+            await page.locator('#btn-start-onboarding').click();
             assert.equal(await page.locator('#account-dialog').evaluate(el => el.hidden), false);
             const panel = await page.locator('#account-dialog-panel').boundingBox();
             assert.ok(Math.abs(panel.x + panel.width / 2 - 195) < 2);
             assert.ok(Math.abs(panel.y + panel.height / 2 - 370) < 2);
             await page.locator('#account-dialog-backdrop').click({ position: { x: 5, y: 5 } });
             assert.equal(await page.locator('#account-dialog').evaluate(el => el.hidden), true);
-            await page.locator('#btn-start-onboarding').click();
-            assert.equal(await page.locator('[data-dialog-view=onboarding]').evaluate(el => el.hidden), false);
-            await page.locator('#btn-close-account').click();
             await page.locator('#food-search-input').fill('apple');
             release();
             await page.waitForFunction(() => document.documentElement.dataset.catalogStatus === 'ready');
@@ -44,7 +44,7 @@ test('catalog errors preserve controls, reject incomplete data and allow a succe
         await page.goto(baseURL);
         await page.waitForFunction(() => document.documentElement.dataset.catalogStatus === 'error');
         assert.equal(await page.evaluate(async () => (await import('/product-catalog.js')).allFoods().length), 0);
-        await page.locator('#btn-account').click(); await page.locator('#btn-close-account').click();
+        await page.locator('#btn-menu').click(); await page.locator('#btn-account').click(); await page.locator('#btn-settings-back').click();
         await page.locator('#btn-start-onboarding').click(); await page.locator('#btn-close-account').click();
         await page.unroute('**/data/foods.json');
         await page.locator('#btn-retry-catalog').click();
@@ -56,7 +56,7 @@ test('a dashboard initialization failure cannot disable account or onboarding li
     await withPage(async page => {
         await page.route('**/dashboard.js', route => route.fulfill({ contentType: 'text/javascript', body: 'export function createDashboard() { throw new Error("Injected dashboard failure"); }' }));
         await page.goto(baseURL);
-        await page.locator('#btn-account').click(); await page.locator('#btn-close-account').click();
+        await page.locator('#btn-menu').click(); await page.locator('#btn-account').click(); await page.locator('#btn-settings-back').click();
         await page.locator('#btn-start-onboarding').click();
         assert.equal(await page.locator('[data-dialog-view=onboarding]').evaluate(el => el.hidden), false);
     });
@@ -97,7 +97,7 @@ test('an onboarding failure cannot stop Firebase auth initialization', async () 
         await page.route('**/dist/firebase-adapter.js', route => route.fulfill({ contentType: 'text/javascript', body: 'export async function createFirebaseAdapter() { return { onAuth(callback) { callback(null); return () => {}; }, destroy() {} }; }' }));
         await page.goto(baseURL);
         await page.waitForFunction(() => document.querySelector('#account-panel').dataset.authReady === 'true');
-        await page.locator('#btn-account').click();
+        await page.locator('#btn-menu').click(); await page.locator('#btn-account').click();
         await page.locator('[data-dialog-tab="account"].select-trigger').click();
         assert.equal(await page.locator('#auth-form button[type=submit]').isEnabled(), true);
     });

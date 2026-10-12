@@ -2,7 +2,7 @@
 
 `dashboard.js` mounts the existing header and rings, bars, and minimal views once. It caches all numeric text nodes, progress circles, transform-scaled bars, and view wrappers. `update(totals, targets, view)` only writes changed text/styles and toggles view visibility. It does not query the DOM again, measure layout, or replace the dashboard subtree. The toggle button retains its identity and keyboard focus.
 
-`main.js` initializes the dashboard beside the view state and calls `dashboard.update()` from `renderDailyBrief()`. Existing logging, editing, deletion, visibility refreshes, and view toggles use that path. Diary rendering remains separate and unchanged. Phase 1 is now integrated: store subscriptions refresh this dashboard, and the centralized router handles view toggles. Phase 3 is not included.
+`main.js` initializes the dashboard beside the view state and calls `dashboard.update()` from `renderDailyBrief()`. Existing logging, editing, deletion, visibility refreshes, and view toggles use that path. Diary rendering remains separate. Store subscriptions refresh this dashboard, and the centralized router handles view toggles. The dashboard now also supports historical periods, weight trends, and Settings navigation; see [dashboard-and-settings.md](dashboard-and-settings.md).
 
 Ratios clamp to 0–100%; zero/negative targets show zero progress. Non-finite totals/targets normalize to zero. Calorie differences retain the existing Remaining/Over display and colors.
 

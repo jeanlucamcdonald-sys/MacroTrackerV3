@@ -1,0 +1,33 @@
+# Settings and historical dashboard
+
+Account, Profile, and Settings entries now live in the hamburger drawer. They open one Settings page with Account, Profile, Nutrition & goals, and Data sections. The Back control restores the previous app view, scroll position, selected macro period, date, and log presentation. Account sign-in/recovery remains available while diary hydration is pending; profile, goal, weight, and import controls stay disabled until account data is ready. Only the guided onboarding wizard remains a centered dialog.
+
+Greetings resolve the complete app profile display name, legacy profile name, Firebase display name, then email prefix. Local time sets morning at 04:00, afternoon at 12:00, and evening at 18:00 (including midnight–03:59). The prompt library contains 59 phrases across meal phases, cut/bulk/maintenance goals, and playful options. Selection is stable within a local half-hour window, scoped to the date, account/name, and goal. Refresh occurs each minute, on visibility changes, profile changes, and account callbacks. Profile values are rendered as text.
+
+## Macro history
+
+Day, Week, and Month share one selected local date across the dashboard and log. Weeks run Monday–Sunday; Month means the actual calendar month, including leap days, rather than an arbitrary rolling 30 days. Previous/next preserve the day where possible; Today returns to the current period. A view following today advances at local midnight, while deliberately selected historical periods remain selected. Date arithmetic uses local calendar dates and handles DST.
+
+Day rings show the selected day's totals. Week/month rings show average intake per **day with diary entries**, compared with current daily targets. The summary also shows all four period totals, logged-day count, and daily trends. Missing days are missing data, not zero-intake days. Calorie compliance is the percentage of logged days within ±10% of the **current** calorie target. Calorie balance compares recorded intake with current targets only for logged days; neither metric represents unrecorded days or historical target snapshots.
+
+Timeline groups food entries by date and retains edit/delete controls. Calendar shows a complete month with calorie summaries, macro details in accessible labels/tooltips, and target-status badges. The selected period is outlined; clicking any date opens its daily timeline. Historical food and meal edits carry both entry ID and date, so identical IDs on different dates remain independent. Editors opened before midnight close on rollover and cannot accidentally write into a different day.
+
+## Weight history
+
+The weight card sits immediately below the macro dashboard. It shows latest weight through the selected date, seven-day change when an earlier baseline exists, change from the first reading, selected-period change, and a 30-day trend. Missing comparison measurements are labeled. Comparisons convert to the preferred kg/lb unit without rewriting original history.
+
+Quick entry and the full Weight Log use a shared controller. Logging another weight on an existing date updates that day's reading. Edit and delete are available from history, linked from the card. Edits preserve the original stored unit while translating the displayed preferred-unit value. Profile current weight tracks the latest recorded entry.
+
+Completing onboarding adds `onboarding-start` only when onboarding is incomplete and no weight history exists. Profile, targets, and initial weight are saved in one store transaction, then synced with the existing `weightLogs` model. Repeat submission and plan recalculation do not add duplicate readings.
+
+## Backups
+
+Export downloads `macro-tracker-backup-YYYY-MM-DD.json` with a versioned envelope and complete account-scoped state. The shared 6,636-food reference catalog remains a separate static asset and is not duplicated in backups. Old raw-state backups remain importable.
+
+Import validates the structure, dates, weight measurements, target invariants, and stable record IDs before showing counts and merge/replace actions. Selecting a file does not change data. Merge retains current profile/settings/targets and existing matching IDs; it adds new saved foods, meals, weights, and dated diary entries, recomputing merged diary totals. Replace uses the validated backup. Cancel and invalid files leave state unchanged. Account changes invalidate pending previews and asynchronous reads. Import is disabled until authentication/profile hydration resolves. Imported edits use the existing device cache and cloud conflict handling; the interface distinguishes local import success from confirmed cloud backup.
+
+## Rendering and validation
+
+SVG/ring wrappers permit overflow, and the duplicate wrapper shadow has been removed. Root backgrounds cover the viewport; the bottom fade lives outside the scroll container and includes safe-area padding. Mobile/desktop and 50%-zoom screenshots were inspected. New components initialize independently behind rejection handlers and are included in the versioned service-worker shell.
+
+Run `npm run build`, `npm run test:engine`, and `npm run test:browser`. With demo Auth/Firestore emulators running, run `node --test tests/auth-actions.test.cjs tests/firestore-rules.test.cjs`, then `MACROTRACKER_EMULATORS=1 node --test tests/cloud-browser.test.cjs`. Set `MACROTRACKER_TEST_URL` to the local HTTP server where needed. Rules tests clear the demo database and must finish before cloud-browser tests start. Production Firebase deployment requires the existing configured GitHub workflow/credentials; an emulator pass does not verify a live Google session or production rollout.

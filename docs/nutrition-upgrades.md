@@ -23,11 +23,11 @@ Local search uses a pre-normalized text index and ranks saved foods and exact ma
 
 The primary ingestion paths are built-in/reference queries, current-product search, and barcode scanning. “Build Meal” opens the recipe builder rather than manual food creation. Legacy food editing/import remains supported. Both meal ingredient pickers search the complete reference catalog and limit rendered results to 30; the database view shows up to 60 rows and prompts users to narrow their search. Searchable pickers do not dismiss while their input is being used. Missing product nutrients are not silently filled with zero. USDA results stay on a 100g basis rather than inventing a grams-to-volume density.
 
-## Centered account controls and personalized dashboard
+## Settings and personalized dashboard
 
-The top Account button opens a centered, keyboard-accessible dialog. The hamburger menu contains daily view, database, and weight log navigation, without account/profile/settings controls. The quick overview dismisses after eight seconds. Explicit Account, Profile, Settings, and onboarding views remain open until dismissed; outside click, close button, and Escape dismiss the dialog. The account tab greets the user with “Welcome! Continue with Google or create an account.”
+Account, Profile, and Settings controls are in the hamburger menu and open a dedicated Settings page with profile, goals, account recovery, and visible backup import/export sections. Guided onboarding remains a centered keyboard-accessible dialog. Profile display names take precedence over Google names. Local-time salutations and 59 stable, goal-aware prompts personalize the dashboard.
 
-The dashboard follows the Firebase `onAuthStateChanged` callback and greets the user's Firebase display name, profile `displayName`/`name`, or email prefix, falling back to “Welcome there” for an unnamed guest. During account hydration it does not reuse the previous account's profile. Canonical profiles live at `users/{uid}/profile/current`; older name-only profiles at `users/{uid}` are read only if the canonical profile has no name. The legacy document is readable only by its owner and cannot be written through the client. Local time determines morning, afternoon, evening, and late-night prompts, with slowly rotating phrases. The context refreshes each minute and on page visibility changes. Date rollover continues to bind diary rendering to the current local day.
+The dashboard now includes initial onboarding weight capture, quick weight entry, normalized trends/history, calendar-period macro summaries, and Calendar/Timeline food logs. See [dashboard-and-settings.md](dashboard-and-settings.md) for navigation, averaging, target-comparison, weight-edit, and backup merge semantics.
 
 ## Startup resilience and catalog hosting
 

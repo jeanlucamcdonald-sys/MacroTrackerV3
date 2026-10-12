@@ -31,7 +31,7 @@ test('guided onboarding generates balanced targets and personalized greeting', a
         assert.equal(state.settings.onboardingComplete, true);
         assert.equal(state.profile.activity, 'moderate');
         assert.ok(Math.abs(state.targets.cal - (4 * state.targets.p + 4 * state.targets.c + 9 * state.targets.f)) < 1e-5);
-        assert.equal(await page.locator('#dashboard-greeting').textContent(), 'Welcome Jean-Luc');
+        assert.match(await page.locator('#dashboard-greeting').textContent(), /^Good (morning|afternoon|evening), Jean-Luc$/);
         assert.equal(await page.locator('#onboarding-card').evaluate(el => el.hidden), true);
     });
 });
@@ -51,18 +51,20 @@ test('target editor caps impossible protein and synchronizes calories in unlocke
         assert.equal(state.targets.cal, 2400); assert.equal(state.targets.p, 600);
     });
 });
-test('quick account overview auto-dismisses; explicit settings stay open and hamburger is clean', async () => {
+test('account/profile/settings live in the menu and Settings preserves dashboard selection', async () => {
     await withPage(async page => {
-        assert.equal(await page.locator('#drawer-panel #account-panel').count(), 0);
-        assert.equal(await page.locator('#drawer-panel [data-nav=view-profile]').count(), 0);
-        await page.clock.install();
-        await click(page, '#btn-account'); await page.clock.runFor(8100);
-        assert.equal(await page.locator('#account-dialog').evaluate(el => el.hidden), true);
-        await click(page, '#btn-account'); await click(page, '[data-dialog-tab=settings]');
-        await page.clock.runFor(8100);
-        assert.equal(await page.locator('#account-dialog').evaluate(el => el.hidden), false);
-        await click(page, '#account-dialog-backdrop');
-        assert.equal(await page.locator('#account-dialog').evaluate(el => el.hidden), true);
+        assert.equal(await page.locator('body > nav #btn-account').count(), 0);
+        assert.equal(await page.locator('#drawer-panel #btn-account').count(), 1);
+        await click(page, '[data-period=week]'); await click(page, '[data-log-format=calendar]');
+        await click(page, '#btn-account');
+        assert.equal(await page.locator('#view-settings').isVisible(), true);
+        await click(page, '[data-dialog-tab=settings]');
+        assert.equal(await page.locator('#goals-form').isVisible(), true);
+        await click(page, '[data-dialog-tab=data]');
+        assert.equal(await page.locator('#btn-export-backup').isVisible(), true);
+        await click(page, '#btn-settings-back');
+        assert.equal(await page.locator('[data-period=week]').getAttribute('aria-pressed'), 'true');
+        assert.equal(await page.locator('[data-log-format=calendar]').getAttribute('aria-pressed'), 'true');
     });
 });
 test('built-in catalog covers thousands of foods and searches ranked local results offline', async () => {
@@ -86,10 +88,10 @@ test('time-aware prompts handle morning, afternoon, evening and untrusted profil
             const { dashboardContext } = await import('/dashboard-context.js');
             return [8, 13, 19, 23].map(hour => dashboardContext({ displayName: 'Jean-Luc' }, null, new Date(2026, 9, 11, hour, 0)));
         });
-        assert.equal(contexts[0].prompt, "What's for breakfast?");
-        assert.equal(contexts[1].prompt, "What's fueling you today?");
-        assert.equal(contexts[2].phase, 'evening'); assert.equal(contexts[3].phase, 'late');
-        assert.equal(contexts.every(context => context.greeting === 'Welcome Jean-Luc'), true);
+        assert.match(contexts[0].greeting, /^Good morning, Jean-Luc$/);
+        assert.match(contexts[1].greeting, /^Good afternoon, Jean-Luc$/);
+        assert.equal(contexts[2].phase, 'evening'); assert.equal(contexts[3].phase, 'evening');
+        assert.equal(contexts.every(context => context.greeting.endsWith(', Jean-Luc')), true);
     });
 });
 

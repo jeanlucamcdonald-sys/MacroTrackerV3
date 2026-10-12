@@ -23,9 +23,9 @@
 <body class="bg-slate-950 text-slate-100 h-screen flex flex-col font-sans overflow-hidden antialiased">
 
     <!-- FLOATING TOP NAV -->
-    <nav class="absolute top-0 w-full p-6 flex justify-between items-center z-40">
-        <button id="btn-account" type="button" class="select-trigger" aria-label="Open account controls">Account</button>
-        <button id="btn-menu" class="p-2 text-slate-400 hover:text-white transition bg-slate-900/50 rounded-full backdrop-blur-md active:scale-95">
+    <nav id="main-nav" aria-label="Main navigation" class="absolute top-0 w-full p-6 flex justify-between items-center z-40">
+        <span class="font-bold tracking-tight">MacroTracker</span>
+        <button id="btn-menu" aria-label="Open navigation" aria-expanded="false" class="p-2 text-slate-400 hover:text-white transition bg-slate-900/50 rounded-full backdrop-blur-md active:scale-95">
             <svg class="w-6 h-6 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"></path></svg>
         </button>
     </nav>
@@ -37,7 +37,7 @@
         <section id="view-home" class="app-view block max-w-2xl mx-auto w-full px-6 pt-[15vh] relative z-10">
 
             <div class="text-center mb-8 relative">
-                <h1 id="dashboard-greeting" class="text-4xl md:text-5xl font-semibold tracking-tight text-white mb-3">Welcome there</h1>
+                <h1 id="dashboard-greeting" class="text-4xl md:text-5xl font-semibold tracking-tight text-white mb-3">Good afternoon, there</h1>
                 <p id="dashboard-prompt" class="text-lg text-slate-400">What's fueling you today?</p>
             </div>
 
@@ -70,10 +70,16 @@
 
             <!-- Visuals & Logs -->
             <div class="space-y-8 mt-12 border-t border-slate-800/50 pt-12 relative z-10">
-                <h2 class="text-xl font-semibold text-white">Daily Brief</h2>
+                <h2 id="brief-title" class="text-xl font-semibold text-white">Daily Brief</h2>
+                <div id="history-controls"></div>
                 <div id="macro-dashboard" class="w-full bg-slate-900 rounded-3xl border border-white/[0.05] p-6 shadow-inner"></div>
+                <div id="weight-dashboard" class="account-card"></div>
+                <div id="period-summary" class="account-card" hidden></div>
+                <div id="macro-trends" class="account-card" hidden></div>
+                <div id="log-format-controls"></div>
+                <div id="log-calendar" class="account-card" hidden></div>
                 <div>
-                    <h3 class="text-xs font-bold text-slate-500 uppercase tracking-widest mb-4">Chronological Log</h3>
+                    <h3 class="text-xs font-bold text-slate-500 uppercase tracking-widest mb-4">Food Log</h3>
                     <div id="daily-log-container" class="space-y-3"></div>
                 </div>
             </div>
@@ -108,7 +114,7 @@
             <div id="database-list-container" class="space-y-3"></div>
         </section>
 
-        <div class="fixed bottom-0 left-0 w-full h-32 bg-gradient-to-t from-slate-950 via-slate-950/80 to-transparent pointer-events-none z-20"></div>
+
 
 
         <section id="view-weight" class="app-view hidden max-w-2xl mx-auto w-full px-6 pt-24 pb-12">
@@ -120,7 +126,57 @@
             </form>
             <ul id="weight-history" class="account-card mt-6 space-y-2" aria-live="polite"></ul>
         </section>
+
+        <section id="view-settings" class="app-view hidden settings-view">
+            <header><button id="btn-settings-back" type="button" class="select-trigger">← Back</button><h1 class="text-3xl font-bold mt-4 mb-4" tabindex="-1">Settings</h1></header>
+            <nav class="settings-links" aria-label="Settings sections"><button type="button" data-dialog-tab="account" class="select-trigger">Account</button><button type="button" data-dialog-tab="profile" class="select-trigger">Profile</button><button type="button" data-dialog-tab="settings" class="select-trigger">Goals</button><button type="button" data-dialog-tab="data" class="select-trigger">Import / Export</button></nav>
+            <section id="settings-account" data-settings-section="account"><h2 tabindex="-1">Account</h2><p class="muted">Welcome! Continue with Google or create an account.</p><section id="account-panel" class="account-card mt-6" aria-label="Account and backup">
+                <div id="profile-avatar" class="avatar" aria-hidden="true">M</div><p id="auth-providers" class="text-xs mb-2"></p><p data-user-email class="text-sm break-words"></p>
+                <p id="cloud-status" role="status" class="text-xs mb-3">Loading device diary…</p>
+                <form id="auth-form" class="space-y-2">
+                    <label>Email<input type="email" name="email" required autocomplete="email"></label>
+                    <label>Password<input type="password" name="password" required minlength="6" autocomplete="current-password"></label>
+                    <button type="submit" class="primary-button">Sign in</button>
+                    <button type="button" id="btn-sign-up" class="select-trigger">Create account</button>
+                    <button type="button" id="btn-google-sign-in" class="select-trigger">Continue with Google</button>
+                </form>
+                <button id="btn-reset-password" type="button" class="select-trigger">Reset password</button>
+                <button id="btn-sign-out" type="button" class="select-trigger" hidden>Sign out</button>
+                <button id="btn-sync-retry" type="button" class="select-trigger" hidden>Retry backup</button>
+                <button id="btn-cloud-reload" type="button" class="select-trigger" hidden>Reload cloud copy</button>
+                <p class="text-xs mt-3">Storage: <span id="storage-label">Device only</span></p>
+</section></section>
+            <section id="settings-profile" data-settings-section="profile"><h2 tabindex="-1">Profile</h2><p id="onboarding-status" class="text-sm mb-3"></p><form id="profile-form" class="account-card space-y-4">
+                <label>Display name<input name="displayName" maxlength="80" autocomplete="name"></label>
+                <label>Height (cm)<input name="heightCm" type="number" min="30" max="300" step="0.1"></label>
+                <label>Goal weight<input name="goalWeight" type="number" min="1" max="1999" step="0.1"></label>
+                <label>Weight unit<input name="weightUnit" type="hidden" value="kg"><button type="button" id="btn-profile-weight-unit" class="select-trigger">Kilograms (kg)</button></label>
+                <label>Current recorded weight<input name="currentWeight" readonly placeholder="Log a weight below your Daily Brief"></label>
+                <label>Primary goal<input name="goal" type="hidden" value="maintain"><button id="btn-profile-goal" type="button" class="select-trigger">Maintain weight</button></label>
+                <label>Activity level<input name="activity" type="hidden" value="sedentary"><button id="btn-profile-activity" type="button" class="select-trigger">Mostly seated</button></label>
+                <p id="profile-feedback" role="status" class="text-sm"></p>
+                <button type="submit" class="primary-button">Save profile</button>
+            </form></section>
+            <section id="settings-settings" data-settings-section="settings"><h2 tabindex="-1">Nutrition & goals</h2><form id="goals-form" class="account-card space-y-4 mt-6">
+                <h3 class="font-bold">Daily macronutrient goals</h3><button id="btn-recalculate-plan" type="button" class="select-trigger">Recalculate from your profile</button>
+                <label class="flex gap-2"><input id="calorie-lock" type="checkbox" checked> Keep calories fixed when editing macros</label>
+                <p id="macro-energy-total" class="text-sm"></p>
+                <label>Calories (kcal)<input name="cal" type="number" step="any" min="0" max="100000" required></label>
+                <label>Protein (g)<input name="p" type="number" step="any" min="0" max="100000" required></label>
+                <label>Carbohydrates (g)<input name="c" type="number" step="any" min="0" max="100000" required></label>
+                <label>Fat (g)<input name="f" type="number" step="any" min="0" max="100000" required></label>
+                <button type="submit" class="primary-button">Save goals</button>
+            </form><p id="nutrition-message" class="text-sm mt-4" role="status"></p></section>
+            <section id="settings-data" data-settings-section="data" class="account-card"><h2 tabindex="-1">Your data</h2><p class="muted">Download a full backup of this diary, profile, goals, meals, and weight history.</p>                <button id="btn-export-backup" type="button" class="select-trigger mt-3">Export backup</button>
+                <label class="text-xs mt-3">Import backup<input id="backup-import" type="file" accept="application/json,.json"></label>
+
+                <div id="backup-preview" hidden><p id="backup-summary" class="mt-3"></p><p class="muted">Merge keeps your current profile/goals and existing records when IDs match. Replace uses the backup instead. Changes sync to the account currently signed in.</p><div class="settings-links"><button id="btn-import-merge" type="button" class="primary-button">Merge backup</button><button id="btn-import-replace" type="button" class="select-trigger">Replace with backup</button><button id="btn-import-cancel" type="button" class="select-trigger">Cancel</button></div></div>
+                <p id="backup-status" role="status" class="mt-3"></p>
+            </section>
+        </section>
     </main>
+
+    <div id="bottom-fade" aria-hidden="true"></div>
 
     <!-- BARCODE SCANNER MODAL -->
     <div id="scanner-modal" class="fixed inset-0 z-[60] flex flex-col hidden bg-slate-950 transition-opacity duration-300">
@@ -334,7 +390,7 @@
     <div id="drawer-container" class="fixed inset-0 z-50 pointer-events-none">
         <div id="drawer-backdrop" class="absolute inset-0 bg-slate-950/60 backdrop-blur-md opacity-0 transition-opacity duration-300 pointer-events-none"></div>
 
-        <aside id="drawer-panel" class="absolute top-0 right-0 h-full w-72 max-w-[85vw] bg-slate-900 border-l border-white/[0.05] p-6 flex flex-col justify-between transform translate-x-full transition-transform duration-300 ease-out shadow-2xl pointer-events-auto">
+        <aside id="drawer-panel" inert aria-hidden="true" aria-label="Navigation drawer" class="absolute top-0 right-0 h-full w-72 max-w-[85vw] bg-slate-900 border-l border-white/[0.05] p-6 flex flex-col justify-between transform translate-x-full transition-transform duration-300 ease-out shadow-2xl pointer-events-auto">
             <div>
                 <div class="flex items-center justify-between pb-6 border-b border-slate-800">
                     <div>
@@ -359,6 +415,9 @@
 
 
                     <button data-nav="view-weight" class="drawer-nav-item">Weight Log</button>
+                    <button id="btn-account" type="button" data-settings-target="account" class="drawer-nav-item">Account</button>
+                    <button type="button" data-settings-target="profile" class="drawer-nav-item">Profile</button>
+                    <button type="button" data-settings-target="settings" class="drawer-nav-item">Settings & data</button>
                 </nav>
             </div>
 
@@ -370,49 +429,8 @@
 <div id="account-dialog" class="centered-dialog" hidden>
     <div id="account-dialog-backdrop" class="centered-backdrop"></div>
     <section id="account-dialog-panel" class="centered-panel" role="dialog" aria-modal="true" aria-labelledby="account-dialog-title" tabindex="-1">
-        <header class="flex justify-between items-start gap-3 mb-5"><h2 id="account-dialog-title" class="text-xl font-bold">Welcome!</h2><button id="btn-close-account" type="button" class="select-trigger" aria-label="Close account controls">✕</button></header>
-        <div class="flex flex-wrap gap-2 mb-4"><button type="button" data-dialog-tab="overview" class="select-trigger">Overview</button><button type="button" data-dialog-tab="account" class="select-trigger">Account</button><button type="button" data-dialog-tab="profile" class="select-trigger">Profile</button><button type="button" data-dialog-tab="settings" class="select-trigger">Settings</button></div>
-        <section data-dialog-view="overview">
-            <p class="text-slate-300 mb-4">Continue with Google or create an account to keep your diary backed up.</p>
-            <button type="button" data-dialog-tab="account" class="primary-button">Sign in or create an account</button>
-            <button type="button" data-dialog-tab="profile" class="select-trigger">Your profile</button>
-        </section>
-        <section data-dialog-view="account" hidden><section id="account-panel" class="account-card mt-6" aria-label="Account and backup">
-                <p data-user-email class="text-sm break-words"></p>
-                <p id="cloud-status" role="status" class="text-xs mb-3">Loading device diary…</p>
-                <form id="auth-form" class="space-y-2">
-                    <label>Email<input type="email" name="email" required autocomplete="email"></label>
-                    <label>Password<input type="password" name="password" required minlength="6" autocomplete="current-password"></label>
-                    <button type="submit" class="primary-button">Sign in</button>
-                    <button type="button" id="btn-sign-up" class="select-trigger">Create account</button>
-                    <button type="button" id="btn-google-sign-in" class="select-trigger">Continue with Google</button>
-                </form>
-                <button id="btn-reset-password" type="button" class="select-trigger">Reset password</button>
-                <button id="btn-sign-out" type="button" class="select-trigger" hidden>Sign out</button>
-                <button id="btn-sync-retry" type="button" class="select-trigger" hidden>Retry backup</button>
-                <button id="btn-cloud-reload" type="button" class="select-trigger" hidden>Reload cloud copy</button>
-                <p class="text-xs mt-3">Storage: <span id="storage-label">Device only</span></p>
-                <button id="btn-export-backup" type="button" class="select-trigger mt-3">Export backup</button>
-                <label class="text-xs mt-3">Import backup<input id="backup-import" type="file" accept="application/json,.json"></label>
-            </section></section>
-        <section data-dialog-view="profile" hidden><p id="onboarding-status" class="text-sm mb-3"></p><form id="profile-form" class="account-card space-y-4">
-                <label>Display name<input name="displayName" maxlength="80" autocomplete="name"></label>
-                <label>Height (cm)<input name="heightCm" type="number" min="30" max="300" step="0.1"></label>
-                <label>Goal weight<input name="goalWeight" type="number" min="1" max="1999" step="0.1"></label>
-                <label>Weight unit<input name="weightUnit" type="hidden" value="kg"><button type="button" id="btn-profile-weight-unit" class="select-trigger">Kilograms (kg)</button></label>
-                <button type="submit" class="primary-button">Save profile</button>
-            </form></section>
-        <section data-dialog-view="settings" hidden><form id="goals-form" class="account-card space-y-4 mt-6">
-                <h3 class="font-bold">Daily macronutrient goals</h3><button id="btn-recalculate-plan" type="button" class="select-trigger">Recalculate from your profile</button>
-                <label class="flex gap-2"><input id="calorie-lock" type="checkbox" checked> Keep calories fixed when editing macros</label>
-                <p id="macro-energy-total" class="text-sm"></p>
-                <label>Calories (kcal)<input name="cal" type="number" step="any" min="0" max="100000" required></label>
-                <label>Protein (g)<input name="p" type="number" step="any" min="0" max="100000" required></label>
-                <label>Carbohydrates (g)<input name="c" type="number" step="any" min="0" max="100000" required></label>
-                <label>Fat (g)<input name="f" type="number" step="any" min="0" max="100000" required></label>
-                <button type="submit" class="primary-button">Save goals</button>
-            </form></section>
-        <section data-dialog-view="onboarding" hidden><form id="onboarding-form" class="space-y-4">
+        <header class="flex justify-between items-start gap-3 mb-5"><h2 id="account-dialog-title" class="text-xl font-bold">Build your starting plan</h2><button id="btn-close-account" type="button" class="select-trigger" aria-label="Close plan setup">✕</button></header>
+<section data-dialog-view="onboarding"><form id="onboarding-form" class="space-y-4">
     <p id="onboarding-progress" class="text-sm text-slate-400"></p>
     <section data-step="0" class="account-card">
         <h3 class="font-bold mb-4">Your goal</h3>
@@ -438,7 +456,7 @@
     </section>
     <div class="flex gap-3"><button id="onboarding-back" type="button" class="select-trigger">Back</button><button id="onboarding-next" type="button" class="primary-button">Continue</button><button id="onboarding-complete" type="submit" class="primary-button" hidden>Use these targets</button></div>
 </form></section>
-        <p id="nutrition-message" class="text-sm mt-4" role="status"></p>
+    <p id="onboarding-message" role="status" class="text-sm mt-3"></p>
     </section>
 </div>
 

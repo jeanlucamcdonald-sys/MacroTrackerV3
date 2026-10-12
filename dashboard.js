@@ -19,8 +19,8 @@ export function createDashboard(root) {
         </div>
     <div data-view="rings">
             <div class="flex flex-col items-center justify-center pt-2 pb-2">
-                <div class="relative w-48 h-48 drop-shadow-xl">
-                    <svg viewBox="0 0 100 100" class="w-full h-full transform -rotate-90">
+                <div class="relative w-48 h-48 ring-wrapper">
+                    <svg viewBox="0 0 100 100" class="w-full h-full transform -rotate-90 macro-rings">
                         <circle cx="50" cy="50" r="42" fill="transparent" stroke="#1e293b" stroke-width="7"></circle>
                         <circle cx="50" cy="50" r="32" fill="transparent" stroke="#1e293b" stroke-width="7"></circle>
                         <circle cx="50" cy="50" r="22" fill="transparent" stroke="#1e293b" stroke-width="7"></circle>

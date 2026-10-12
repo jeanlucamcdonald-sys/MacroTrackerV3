@@ -1,4 +1,5 @@
 import { store } from './state.js';
+import { setLatestWeight } from './history-model.js';
 import { estimateNutrition, adjustTargets, macroCalories } from './nutrition-engine.js';
 
 export function initializeNutritionUI(bindClick, signal, selects, dialogs) {
@@ -7,6 +8,7 @@ export function initializeNutritionUI(bindClick, signal, selects, dialogs) {
     const progress = document.getElementById('onboarding-progress');
     const result = document.getElementById('onboarding-estimate');
     const message = document.getElementById('nutrition-message');
+    const wizardMessage = document.getElementById('onboarding-message');
     const goals = document.getElementById('goals-form');
     const locked = document.getElementById('calorie-lock');
     let step = 0;
@@ -41,9 +43,9 @@ export function initializeNutritionUI(bindClick, signal, selects, dialogs) {
             try {
                 estimate = estimateNutrition(values());
                 result.textContent = `Estimated expenditure: ${estimate.expenditure} kcal/day. Starting target: ${estimate.targets.cal} kcal, ${estimate.targets.p.toFixed(0)}g protein, ${estimate.targets.c.toFixed(1)}g carbs, ${estimate.targets.f.toFixed(1)}g fat. Protein: ${estimate.proteinPerKg}g/kg. ${estimate.method}; adjust as you track your progress.`;
-            } catch (error) { message.textContent = error.message; return; }
+            } catch (error) { wizardMessage.textContent = error.message; return; }
         }
-        step++; showStep(); message.textContent = '';
+        step++; showStep(); wizardMessage.textContent = '';
     });
     bindClick(document.getElementById('onboarding-back'), () => { step = Math.max(0, step - 1); showStep(); });
     wizard.addEventListener('submit', event => {
@@ -53,9 +55,15 @@ export function initializeNutritionUI(bindClick, signal, selects, dialogs) {
         store.update(state => {
             state.profile = { ...state.profile, ...valuesNow, age: Number(valuesNow.age), heightCm: Number(valuesNow.heightCm), currentWeight: Number(valuesNow.currentWeight), displayName: wizard.elements.displayName.value.trim(), expenditure: estimate.expenditure, bmr: estimate.bmr };
             state.targets = estimate.targets;
+            // Capture the initial weight once; plan recalculation never adds another entry.
+            if (!state.settings.onboardingComplete && !state.weightLog.length) {
+                state.weightLog.push({ id: 'onboarding-start', timestamp: new Date().toISOString(), value: Number(valuesNow.currentWeight), unit: valuesNow.weightUnit });
+            }
+            setLatestWeight(state);
             state.settings.onboardingComplete = true;
             state.settings.isCalLocked = true;
         });
+        estimate = null;
         dialogs.open('profile');
     }, { signal });
     function openWizard() {

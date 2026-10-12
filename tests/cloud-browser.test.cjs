@@ -22,7 +22,7 @@ async function signIn(page, email, create = false) {
     if (create) await click(page, '#btn-sign-up');
     else await page.locator('#auth-form').dispatchEvent('submit');
     await page.waitForFunction(() => document.querySelector('#cloud-status').textContent === 'Backed up to your account.');
-    await click(page, '#btn-close-account');
+    await click(page, '#btn-settings-back');
 }
 async function logChicken(page) {
     await page.locator('#food-search-input').fill('Chicken');
@@ -184,14 +184,14 @@ test('auth restoration uses displayName, canonical profile name, legacy profile 
         const { page, context } = await pageFor(browser);
         const errors = []; page.on('pageerror', error => errors.push(error.message));
         await signIn(page, email, true);
-        assert.equal(await page.locator('#dashboard-greeting').textContent(), `Welcome ${email.split('@')[0]}`);
+        assert.ok((await page.locator('#dashboard-greeting').textContent()).endsWith(`, ${email.split('@')[0]}`));
         await page.evaluate(async () => {
             const { store } = await import('/state.js');
             store.update(state => { state.profile.name = 'Canonical Person'; });
         });
         await page.waitForFunction(() => document.querySelector('#cloud-status').textContent === 'Backed up to your account.');
         await page.reload();
-        await page.waitForFunction(() => document.querySelector('#dashboard-greeting').textContent === 'Welcome Canonical');
+        await page.waitForFunction(() => document.querySelector('#dashboard-greeting').textContent.endsWith(', Canonical Person'));
         const signedIn = await fetch('http://127.0.0.1:9099/identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=demo-key', {
             method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, password: 'test-password-123', returnSecureToken: true })
         }).then(response => response.json());
@@ -205,7 +205,7 @@ test('auth restoration uses displayName, canonical profile name, legacy profile 
         });
         await page.waitForFunction(() => document.querySelector('#cloud-status').textContent === 'Backed up to your account.');
         await page.reload();
-        await page.waitForFunction(() => document.querySelector('#dashboard-greeting').textContent === 'Welcome Legacy');
+        await page.waitForFunction(() => document.querySelector('#dashboard-greeting').textContent.endsWith(', Legacy Person'));
         const updated = await fetch('http://127.0.0.1:9099/identitytoolkit.googleapis.com/v1/accounts:update?key=demo-key', {
             method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ idToken: signedIn.idToken, displayName: 'Google Person', returnSecureToken: true })
         });
@@ -213,8 +213,41 @@ test('auth restoration uses displayName, canonical profile name, legacy profile 
         await context.close();
         const restored = await pageFor(browser);
         await signIn(restored.page, email);
-        assert.equal(await restored.page.locator('#dashboard-greeting').textContent(), 'Welcome Google');
+        assert.ok((await restored.page.locator('#dashboard-greeting').textContent()).endsWith(', Legacy Person'), 'App profile overrides Google name');
         assert.deepEqual(errors, []);
         await restored.context.close();
+    } finally { await browser.close(); }
+});
+
+test('onboarding weight, profile name and dashboard edits restore across fresh authenticated sessions', { skip: !process.env.MACROTRACKER_EMULATORS }, async () => {
+    const browser = await chromium.launch({ executablePath: '/usr/bin/chromium', headless: true, args: ['--no-sandbox'] });
+    try {
+        let { page, context } = await pageFor(browser);
+        await page.waitForFunction(() => !document.querySelector('#btn-start-onboarding').disabled);
+        await click(page, '#btn-start-onboarding');
+        await page.locator('#onboarding-form input[name=displayName]').fill('Preferred Cloud Name'); await click(page, '#onboarding-next');
+        await page.locator('#onboarding-form input[name=age]').fill('30'); await page.locator('#onboarding-form input[name=heightCm]').fill('180'); await page.locator('#onboarding-form input[name=currentWeight]').fill('80');
+        await click(page, '#onboarding-next'); await click(page, '#onboarding-next'); await page.locator('#onboarding-form').dispatchEvent('submit');
+        await page.evaluate(async () => (await import('/persistence.js')).deviceCache.flush());
+        const email = `weight-cloud-${Date.now()}@example.test`;
+        await signIn(page, email, true);
+        await page.waitForFunction(async () => {
+            const { deviceCache } = await import('/persistence.js');
+            return deviceCache.scope !== 'guest' && !(await deviceCache.read()).pending;
+        });
+        assert.match(await page.locator('#weight-latest').textContent(), /80 kg/);
+        await context.close();
+        ({ page, context } = await pageFor(browser)); await signIn(page, email);
+        assert.match(await page.locator('#weight-latest').textContent(), /80 kg/);
+        assert.ok((await page.locator('#dashboard-greeting').textContent()).endsWith(', Preferred Cloud Name'));
+        await page.locator('#quick-weight-form input[name=value]').fill('79'); await page.locator('#quick-weight-form').dispatchEvent('submit');
+        assert.match(await page.locator('#weight-latest').textContent(), /79 kg/, await page.locator('#weight-feedback').textContent());
+        await page.waitForFunction(() => document.querySelector('#cloud-status').textContent === 'Backed up to your account.');
+        await page.waitForFunction(async () => !(await (await import('/persistence.js')).deviceCache.read()).pending);
+        await context.close();
+        ({ page, context } = await pageFor(browser)); await signIn(page, email);
+        assert.match(await page.locator('#weight-latest').textContent(), /79 kg/);
+        assert.equal(await page.evaluate(async () => (await import('/state.js')).store.get().weightLog.length), 1);
+        await context.close();
     } finally { await browser.close(); }
 });

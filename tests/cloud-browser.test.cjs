@@ -176,3 +176,45 @@ test('cloud diary without a profile document is restored rather than overwritten
         assert.equal(await returning.page.locator('[data-value="total-cal"]').textContent(), '120');
     } finally { await environment.cleanup(); await browser.close(); }
 });
+
+test('auth restoration uses displayName, canonical profile name, legacy profile name and email fallback', { skip: !process.env.MACROTRACKER_EMULATORS }, async () => {
+    const browser = await chromium.launch({ executablePath: '/usr/bin/chromium', headless: true, args: ['--no-sandbox'] });
+    const email = `greeting-${Date.now()}@example.test`;
+    try {
+        const { page, context } = await pageFor(browser);
+        const errors = []; page.on('pageerror', error => errors.push(error.message));
+        await signIn(page, email, true);
+        assert.equal(await page.locator('#dashboard-greeting').textContent(), `Welcome ${email.split('@')[0]}`);
+        await page.evaluate(async () => {
+            const { store } = await import('/state.js');
+            store.update(state => { state.profile.name = 'Canonical Person'; });
+        });
+        await page.waitForFunction(() => document.querySelector('#cloud-status').textContent === 'Backed up to your account.');
+        await page.reload();
+        await page.waitForFunction(() => document.querySelector('#dashboard-greeting').textContent === 'Welcome Canonical');
+        const signedIn = await fetch('http://127.0.0.1:9099/identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=demo-key', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, password: 'test-password-123', returnSecureToken: true })
+        }).then(response => response.json());
+        assert.ok(signedIn.localId);
+        const root = `http://127.0.0.1:8080/v1/projects/demo-macrotracker/databases/(default)/documents/users/${signedIn.localId}`;
+        const legacy = await fetch(root, { method: 'PATCH', headers: { Authorization: 'Bearer owner', 'Content-Type': 'application/json' }, body: JSON.stringify({ fields: { profile: { mapValue: { fields: { name: { stringValue: 'Legacy Person' } } } } } }) });
+        assert.equal(legacy.ok, true);
+        await page.evaluate(async () => {
+            const { store } = await import('/state.js');
+            store.update(state => { state.profile.name = ''; state.profile.displayName = ''; });
+        });
+        await page.waitForFunction(() => document.querySelector('#cloud-status').textContent === 'Backed up to your account.');
+        await page.reload();
+        await page.waitForFunction(() => document.querySelector('#dashboard-greeting').textContent === 'Welcome Legacy');
+        const updated = await fetch('http://127.0.0.1:9099/identitytoolkit.googleapis.com/v1/accounts:update?key=demo-key', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ idToken: signedIn.idToken, displayName: 'Google Person', returnSecureToken: true })
+        });
+        assert.equal(updated.ok, true);
+        await context.close();
+        const restored = await pageFor(browser);
+        await signIn(restored.page, email);
+        assert.equal(await restored.page.locator('#dashboard-greeting').textContent(), 'Welcome Google');
+        assert.deepEqual(errors, []);
+        await restored.context.close();
+    } finally { await browser.close(); }
+});

@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <meta name="theme-color" content="#020617">
+    <link rel="icon" type="image/svg+xml" href="./icon.svg">
     <link rel="manifest" href="./manifest.webmanifest">
     <title>MacroTracker V3</title>
     <link rel="stylesheet" href="./dist/tailwind.css">
@@ -56,6 +57,8 @@
                         </svg>
                     </button>
                 </div>
+                <p id="catalog-status" role="status" class="text-xs text-slate-400 mt-2">Loading built-in foods…</p>
+                <button id="btn-retry-catalog" hidden type="button" class="text-xs text-blue-400 mt-1">Reload food catalog</button>
 
                 <div id="search-dropdown" class="absolute w-full mt-3 bg-slate-800/95 backdrop-blur-xl border border-white/[0.05] rounded-2xl shadow-2xl overflow-y-auto no-scrollbar hidden max-h-60 z-40 transform origin-top transition-transform">
                     <div id="dropdown-results" class="flex flex-col py-2"></div>

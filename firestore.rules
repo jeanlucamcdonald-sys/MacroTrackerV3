@@ -13,6 +13,10 @@ service cloud.firestore {
       return macros(value) && value.cal - (4 * value.p + 4 * value.c + 9 * value.f) < 0.001
         && (4 * value.p + 4 * value.c + 9 * value.f) - value.cal < 0.001;
     }
+    // Legacy profile name lookup only; canonical writes use profile/current.
+    match /users/{uid} {
+      allow read: if owner(uid);
+    }
     match /users/{uid}/profile/current {
       allow read: if owner(uid);
       allow create, update: if owner(uid) && request.resource.data.keys().hasOnly(['version', 'profile', 'settings', 'targets', '_revision'])

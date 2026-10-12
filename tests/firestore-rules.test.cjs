@@ -48,3 +48,15 @@ test('malformed dates, negative goals and invalid weight values are denied', asy
     await assertFails(setDoc(doc(db, 'users/alice/catalog/current'), { ...records['catalog/current'], admin: true }));
     await assertFails(setDoc(doc(db, 'users/alice/private/anything'), { value: 1 }));
 });
+
+test('legacy profile names are readable only by their owner and remain read-only', async () => {
+    await environment.withSecurityRulesDisabled(async context => {
+        await setDoc(doc(context.firestore(), 'users/alice'), { name: 'Alice Example' });
+    });
+    const owner = doc(environment.authenticatedContext('alice').firestore(), 'users/alice');
+    await assertSucceeds(getDoc(owner));
+    await assertFails(setDoc(owner, { name: 'Changed' }));
+    await assertFails(deleteDoc(owner));
+    await assertFails(getDoc(doc(environment.authenticatedContext('bob').firestore(), 'users/alice')));
+    await assertFails(getDoc(doc(environment.unauthenticatedContext().firestore(), 'users/alice')));
+});

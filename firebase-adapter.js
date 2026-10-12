@@ -47,6 +47,22 @@ export async function createFirebaseAdapter(config) {
                     for (const entry of snapshot.docs) add(`${group}/${entry.id}`, entry);
                 })
             ]);
+            // Older profiles may store their name on users/{uid}. Keep canonical diary
+            // documents authoritative, and read only this account's optional legacy name.
+            const canonical = documents.get('profile/current');
+            if (!canonical?.profile?.displayName && !canonical?.profile?.name) {
+                try {
+                    const legacy = await getDocFromServer(doc(db, 'users', uid));
+                    const data = legacy.exists() ? legacy.data() : {};
+                    const profile = data.profile || data;
+                    const name = [profile.displayName, profile.name].find(value => typeof value === 'string' && value.trim());
+                    if (name) documents.set('profile/current', { ...canonical, profile: { ...canonical?.profile, displayName: name.trim() } });
+                } catch (error) {
+                    // Previously deployed rules may not permit this optional legacy read.
+                    // Core account reads above must still succeed before loading a diary.
+                    if (error.code !== 'permission-denied') throw error;
+                }
+            }
             try {
                 return { state: documents.size ? documentsState(documents) : null, revisions };
             } catch (cause) {

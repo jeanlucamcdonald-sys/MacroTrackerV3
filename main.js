@@ -1,14 +1,10 @@
 import { store } from './state.js';
 import { createRouter } from './router.js';
-import { initializeDialogs } from './dialogs.js';
-import { initializeAccount } from './account.js';
-import { createDashboard } from './dashboard.js';
 import { UNITS, unitOptions, servingFactor, ingredientFactor, convertAmount } from './units.js';
 import { localDateString, watchLocalDay } from './local-date.js';
 import { createSelectSystem } from './select-widget.js';
 import { loadCatalog, allFoods, findFood, searchFoods } from './product-catalog.js';
 import { searchProducts } from './product-search.js';
-await loadCatalog();
 
 const lifetime = new AbortController();
 const clickHandlers = new WeakMap();
@@ -18,8 +14,25 @@ function bindClick(element, handler) {
     clickHandlers.set(element, handler);
 }
 function listen(element, type, handler) {
+    if (!element) return;
     element.addEventListener(type, handler, { signal: lifetime.signal });
 }
+// Register the delegated listener before any independent component starts.
+function initializeSafely(name, initialize, fallback) {
+    try { return initialize(); }
+    catch (error) { console.warn(`${name} initialization failed:`, error); return fallback; }
+}
+const router = createRouter({
+    ui: ({ event, element }) => clickHandlers.get(element)?.(event),
+    'toggle-group': ({ id }) => toggleGroupAccordion(id),
+    'edit-diary-entry': ({ id }) => editDiaryEntry(id),
+    'delete-diary-entry': ({ id }) => deleteDiaryEntry(id),
+    'remove-builder-ingredient': ({ id }) => removeBuilderIng(Number(id)),
+    'remove-tuner-ingredient': ({ id }) => removeTunerIngredient(Number(id)),
+    ...Object.fromEntries(['edit-food', 'delete-food', 'log-food', 'pin', 'edit-recipe', 'delete-recipe', 'log-recipe']
+        .map(action => [action, ({ event }) => databaseAction(event)]))
+}, { afterDispatch: event => { dismissSearch(event); dismissDropdowns(event); } });
+
 const timers = new Set();
 function schedule(callback, delay) {
     const timer = setTimeout(() => {
@@ -79,7 +92,23 @@ function escapeAttribute(value) {
 }
 
 // 1. Reliable Local Date Helper
-const selects = createSelectSystem(bindClick, { signal: lifetime.signal });
+const selects = initializeSafely('Select menus', () => createSelectSystem(bindClick, { signal: lifetime.signal }), { register() {}, close() {} });
+// Dynamic imports also contain module-evaluation failures (not only initializer errors).
+const dialogReady = import('./dialogs.js')
+    .then(({ initializeDialogs }) => initializeDialogs(bindClick, lifetime.signal, selects))
+    .catch(error => { console.warn('Account dialogs initialization failed:', error); return { open() {}, close() {} }; });
+void dialogReady.then(dialogs => {
+    if (lifetime.signal.aborted) return;
+    void import('./onboarding.js')
+        .then(({ initializeNutritionUI }) => { if (!lifetime.signal.aborted) initializeNutritionUI(bindClick, lifetime.signal, selects, dialogs); })
+        .catch(error => { console.warn('Onboarding initialization failed:', error); });
+    void import('./account.js')
+        .then(({ initializeAccount }) => { if (!lifetime.signal.aborted) return initializeAccount(bindClick, lifetime.signal, selects, dialogs); })
+        .catch(error => {
+            console.warn('Account initialization failed:', error);
+            document.getElementById('cloud-status').textContent = 'Account controls could not initialize. Reload to retry; your device diary is still available.';
+        });
+});
 const getLocalDateString = localDateString;
 
 // 2. Initialize App State & Recipes
@@ -138,7 +167,12 @@ let activeDiaryEntryId = null;
 let activeDiaryDate = null;
 let activeRecipeDate = null;
 let currentDashboardView = 'rings';
-const dashboard = createDashboard(document.getElementById('macro-dashboard'));
+let dashboard = { update() {} };
+void import('./dashboard.js').then(({ createDashboard }) => {
+    if (lifetime.signal.aborted) return;
+    dashboard = createDashboard(document.getElementById('macro-dashboard'));
+    renderDailyBrief();
+}).catch(error => { console.warn('Dashboard initialization failed:', error); });
 let currentDbFilterTab = 'all';
 
 // 4. Fuzzy Search
@@ -1502,17 +1536,6 @@ if (btnConfirmRecipe) {
     });
 }
 
-const router = createRouter({
-    ui: ({ event, element }) => clickHandlers.get(element)?.(event),
-    'toggle-group': ({ id }) => toggleGroupAccordion(id),
-    'edit-diary-entry': ({ id }) => editDiaryEntry(id),
-    'delete-diary-entry': ({ id }) => deleteDiaryEntry(id),
-    'remove-builder-ingredient': ({ id }) => removeBuilderIng(Number(id)),
-    'remove-tuner-ingredient': ({ id }) => removeTunerIngredient(Number(id)),
-    ...Object.fromEntries(['edit-food', 'delete-food', 'log-food', 'pin', 'edit-recipe', 'delete-recipe', 'log-recipe']
-        .map(action => [action, ({ event }) => databaseAction(event)]))
-}, { afterDispatch: event => { dismissSearch(event); dismissDropdowns(event); } });
-
 let lastRenderedState = store.get();
 const unsubscribe = store.subscribe(state => {
     const recipesChanged = JSON.stringify(state.recipes) !== JSON.stringify(lastRenderedState.recipes);
@@ -1537,12 +1560,35 @@ listen(globalThis, 'account-changing', () => {
     cancelSearch(); selects.close(); closeModal(); closeRecipeModal(); closeCustomFoodModal();
     void stopScanner().catch(error => console.error(error));
 });
-const dialogs = initializeDialogs(bindClick, lifetime.signal, selects);
-void initializeAccount(bindClick, lifetime.signal, selects, dialogs);
 
 // 14. Initial App Boot
-renderPredictivePills();
-renderDailyBrief();
+initializeSafely('Predictive meals', renderPredictivePills);
+initializeSafely('Daily diary', renderDailyBrief);
+// Catalog fetches must never delay listener registration, authentication, or plan setup.
+const catalogStatus = document.getElementById('catalog-status');
+async function initializeCatalog() {
+    document.getElementById('btn-retry-catalog').hidden = true;
+    catalogStatus.textContent = 'Loading built-in foods…';
+    document.documentElement.dataset.catalogStatus = 'loading';
+    try {
+        const foods = await loadCatalog();
+        if (lifetime.signal.aborted) return;
+        document.documentElement.dataset.catalogStatus = 'ready';
+        catalogStatus.textContent = `${foods.length.toLocaleString()} built-in foods available offline after loading.`;
+        if (searchInput.value.trim()) renderSearchResults(searchInput.value);
+        if (!document.getElementById('view-database').classList.contains('hidden')) renderDatabaseView(dbFilterInput?.value || '');
+        populateIngredientPicker(document.getElementById('recipe-food-search')?.value || '');
+        renderTunerPicker(document.getElementById('tuner-food-search')?.value || '');
+    } catch (error) {
+        if (lifetime.signal.aborted) return;
+        document.documentElement.dataset.catalogStatus = 'error';
+        document.getElementById('btn-retry-catalog').hidden = false;
+        catalogStatus.textContent = 'Built-in foods are unavailable. Saved foods and online lookup still work.';
+        console.warn('Nutrition catalog unavailable:', error);
+    }
+}
+bindClick(document.getElementById('btn-retry-catalog'), () => { void initializeCatalog(); });
+void initializeCatalog();
 listen(globalThis, 'pagehide', event => {
     cancelSearch();
     void stopScanner().catch(error => console.error('Scanner teardown failed:', error));

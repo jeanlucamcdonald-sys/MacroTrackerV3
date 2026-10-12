@@ -1,6 +1,6 @@
 export function dashboardContext(profile = {}, user = null, date = new Date()) {
     const named = value => typeof value === 'string' ? value.trim() : '';
-    const supplied = named(profile.displayName) || named(user?.displayName) || named(user?.email).split('@')[0] || 'there';
+    const supplied = named(user?.displayName) || named(profile.displayName) || named(profile.name) || named(user?.email).split('@')[0] || 'there';
     const name = supplied.split(/\s+/)[0];
     const hour = date.getHours();
     const phase = hour < 5 ? 'late' : hour < 12 ? 'morning' : hour < 17 ? 'afternoon' : hour < 22 ? 'evening' : 'late';

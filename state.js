@@ -1,3 +1,5 @@
+import { createStore } from './store.js';
+
 // state.js
 
 export const STORAGE_KEY = 'macroTrackerPro_State_v2';
@@ -25,70 +27,71 @@ const DEFAULT_STATE = {
     logs: {} // Sharded by YYYY-MM
 };
 
-// 2. The active in-memory state variable
-export let appState = JSON.parse(JSON.stringify(DEFAULT_STATE));
-
-// 3. State Mutation & Persistence
-export function setAppState(newState) {
-    appState = { ...DEFAULT_STATE, ...newState };
+// Persistence and validation stay here; store.js has no browser dependency.
+function isRecord(value) {
+    return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
-
-export function saveLocalState() {
+function finiteMacros(value) {
+    return isRecord(value) && ['cal', 'p', 'c', 'f'].every(key => Number.isFinite(value[key]) && value[key] >= 0);
+}
+export function validateState(state) {
+    if (!isRecord(state) || !isRecord(state.settings) || !finiteMacros(state.targets)
+        || !Array.isArray(state.foodDatabase) || !Array.isArray(state.weightLog)
+        || !isRecord(state.logs) || (state.recipes !== undefined && !Array.isArray(state.recipes))) return false;
+    if (!state.foodDatabase.every(food => finiteMacros(food) && typeof food.name === 'string' && Number.isFinite(food.serving) && food.serving > 0)) return false;
+    if (state.recipes && !state.recipes.every(recipe => isRecord(recipe) && typeof recipe.name === 'string' && Array.isArray(recipe.ingredients))) return false;
+    for (const month of Object.values(state.logs)) {
+        if (!isRecord(month)) return false;
+        for (const day of Object.values(month)) {
+            if (!isRecord(day) || !finiteMacros(day.totals) || !Array.isArray(day.diary)
+                || !day.diary.every(entry => finiteMacros(entry) && typeof entry.name === 'string' && typeof entry.timestamp === 'string')) return false;
+        }
+    }
+    return true;
+}
+function normalizeState(parsed) {
+    if (!isRecord(parsed) || !isRecord(parsed.targets) || !isRecord(parsed.logs)) throw new TypeError('Invalid backup file structure');
+    const state = {
+        ...structuredClone(DEFAULT_STATE), ...parsed,
+        settings: { ...DEFAULT_STATE.settings, ...parsed.settings },
+        targets: { ...DEFAULT_STATE.targets, ...parsed.targets }
+    };
+    if (!validateState(state)) throw new TypeError('Invalid state');
+    return state;
+}
+export function saveLocalState(state) {
+    // Throw on failure so the store does not publish a state that wasn't saved.
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+}
+function loadLocalState() {
     try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(appState));
-    } catch (e) {
-        console.error("Failed to save state to localStorage:", e);
+        const raw = localStorage.getItem(STORAGE_KEY);
+        return raw ? normalizeState(JSON.parse(raw)) : structuredClone(DEFAULT_STATE);
+    } catch (error) {
+        console.error('Could not restore local state; using defaults:', error);
+        return structuredClone(DEFAULT_STATE);
     }
 }
+export const store = createStore(loadLocalState(), { saveLocalState, validate: validateState });
 
-export function loadLocalState() {
-    const rawData = localStorage.getItem(STORAGE_KEY);
-    if (rawData) {
-        try {
-            const parsed = JSON.parse(rawData);
-            setAppState(parsed);
-            return true;
-        } catch (e) {
-            console.error("Failed to parse local state, falling back to default:", e);
-        }
-    }
-    return false;
-}
-
-// 4. Import / Export Handlers (Your Data Ownership Engine)
 export function exportUserData() {
-    const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(appState, null, 2));
-    const downloadAnchor = document.createElement('a');
-    downloadAnchor.setAttribute("href", dataStr);
-    downloadAnchor.setAttribute("download", `macro_tracker_backup_${new Date().toISOString().split('T')[0]}.json`);
-    document.body.appendChild(downloadAnchor);
-    downloadAnchor.click();
-    downloadAnchor.remove();
+    const data = 'data:text/json;charset=utf-8,' + encodeURIComponent(JSON.stringify(store.get(), null, 2));
+    const anchor = document.createElement('a');
+    anchor.href = data;
+    anchor.download = `macro_tracker_backup_${new Date().toISOString().split('T')[0]}.json`;
+    document.body.append(anchor);
+    try { anchor.click(); } finally { anchor.remove(); }
 }
-
-export function importUserData(fileEvent) {
-    return new Promise((resolve, reject) => {
-        const file = fileEvent.target.files[0];
-        if (!file) {
-            reject(new Error("No file selected"));
-            return;
-        }
-
-        const reader = new FileReader();
-        reader.onload = (e) => {
-            try {
-                const importedData = JSON.parse(e.target.result);
-                // Basic validation: check if it has core keys
-                if (!importedData.targets || !importedData.logs) {
-                    throw new Error("Invalid backup file structure.");
-                }
-                setAppState(importedData);
-                saveLocalState();
-                resolve(true);
-            } catch (err) {
-                reject(err);
-            }
-        };
-        reader.readAsText(file);
+export async function importUserData(fileEvent, { signal } = {}) {
+    const file = fileEvent.target.files[0];
+    if (!file) throw new Error('No file selected');
+    signal?.throwIfAborted();
+    const text = await file.text();
+    signal?.throwIfAborted();
+    const imported = normalizeState(JSON.parse(text));
+    store.update(draft => {
+        for (const key of Object.keys(draft)) delete draft[key];
+        Object.assign(draft, imported);
     });
+    return true;
 }

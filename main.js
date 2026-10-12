@@ -1,5 +1,56 @@
-import { appState, loadLocalState, saveLocalState } from './state.js';
-import { searchExternalDatabase } from './usda.js'; 
+import { store } from './state.js';
+import { createRouter } from './router.js';
+import { createDashboard } from './dashboard.js';
+import { searchExternalDatabase } from './usda.js';
+
+const lifetime = new AbortController();
+const clickHandlers = new WeakMap();
+function bindClick(element, handler) {
+    if (!element) return;
+    element.dataset.action = 'ui';
+    clickHandlers.set(element, handler);
+}
+function listen(element, type, handler) {
+    element.addEventListener(type, handler, { signal: lifetime.signal });
+}
+const timers = new Set();
+function schedule(callback, delay) {
+    const timer = setTimeout(() => {
+        timers.delete(timer);
+        if (!lifetime.signal.aborted) callback();
+    }, delay);
+    timers.add(timer);
+    return timer;
+}
+const closingTimers = new WeakMap();
+function cancelClose(element) {
+    const timer = closingTimers.get(element);
+    clearTimeout(timer);
+    timers.delete(timer);
+    closingTimers.delete(element);
+}
+function finishClose(element, callback) {
+    cancelClose(element);
+    closingTimers.set(element, schedule(() => {
+        closingTimers.delete(element);
+        callback();
+    }, 300));
+}
+
+function wait(delay, signal) {
+    return new Promise((resolve, reject) => {
+        signal.throwIfAborted();
+        const timer = setTimeout(() => { signal.removeEventListener('abort', abort); resolve(); }, delay);
+        function abort() { clearTimeout(timer); reject(signal.reason); }
+        signal.addEventListener('abort', abort, { once: true });
+    });
+}
+let searchRequest = null;
+function cancelSearch() { searchRequest?.abort(); searchRequest = null; }
+
+function escapeAttribute(value) {
+    return String(value).replace(/[&"'<>]/g, char => ({ '&': '&amp;', '"': '&quot;', "'": '&#39;', '<': '&lt;', '>': '&gt;' }[char]));
+}
 
 // 1. Reliable Local Date Helper
 function getLocalDateString() {
@@ -11,30 +62,31 @@ function getLocalDateString() {
 }
 
 // 2. Initialize App State & Recipes
-loadLocalState();
 
-if (!appState.recipes) {
-    appState.recipes = [
-        {
-            id: 'rec_chicken_rice',
-            name: 'Chicken Kebab & Rice',
-            pinned: true,
-            ingredients: [
-                { id: '1', name: 'Chicken Breast (Raw)', amount: 200, unit: 'g', cal: 120, p: 22.5, c: 0, f: 2.6, baseServing: 100, baseUnit: 'g' },
-                { id: '2', name: 'Jasmine Rice (Dry)', amount: 75, unit: 'g', cal: 360, p: 7, c: 80, f: 0.5, baseServing: 100, baseUnit: 'g' }
-            ]
-        },
-        {
-            id: 'rec_yogurt_berries',
-            name: 'Greek Yogurt & Berries',
-            pinned: true,
-            ingredients: [
-                { id: '3', name: 'Nonfat Greek Yogurt', amount: 227, unit: 'g', cal: 130, p: 23, c: 8, f: 0, baseServing: 227, baseUnit: 'g' },
-                { id: '4', name: 'Mixed Berries (Frozen)', amount: 100, unit: 'g', cal: 65, p: 1, c: 14, f: 0.5, baseServing: 100, baseUnit: 'g' }
-            ]
-        }
-    ];
-    saveLocalState();
+if (!store.get().recipes) {
+    store.update(draft => {
+        draft.recipes = [
+            {
+                id: 'rec_chicken_rice',
+                name: 'Chicken Kebab & Rice',
+                pinned: true,
+                ingredients: [
+                    { id: '1', name: 'Chicken Breast (Raw)', amount: 200, unit: 'g', cal: 120, p: 22.5, c: 0, f: 2.6, baseServing: 100, baseUnit: 'g' },
+                    { id: '2', name: 'Jasmine Rice (Dry)', amount: 75, unit: 'g', cal: 360, p: 7, c: 80, f: 0.5, baseServing: 100, baseUnit: 'g' }
+                ]
+            },
+            {
+                id: 'rec_yogurt_berries',
+                name: 'Greek Yogurt & Berries',
+                pinned: true,
+                ingredients: [
+                    { id: '3', name: 'Nonfat Greek Yogurt', amount: 227, unit: 'g', cal: 130, p: 23, c: 8, f: 0, baseServing: 227, baseUnit: 'g' },
+                    { id: '4', name: 'Mixed Berries (Frozen)', amount: 100, unit: 'g', cal: 65, p: 1, c: 14, f: 0.5, baseServing: 100, baseUnit: 'g' }
+                ]
+            }
+        ];
+    });
+
 }
 
 // 3. Element References
@@ -62,9 +114,10 @@ const modalUnitDropdownList = document.getElementById('modal-unit-dropdown-list'
 const modalUnitScaleValue = document.getElementById('modal-unit-scale-value');
 const modalUnitLabelValue = document.getElementById('modal-unit-label-value');
 
-let activeFoodToLog = null; 
-let activeDiaryEntryId = null; 
-let currentDashboardView = 'rings'; 
+let activeFoodToLog = null;
+let activeDiaryEntryId = null;
+let currentDashboardView = 'rings';
+const dashboard = createDashboard(document.getElementById('macro-dashboard'));
 let currentDbFilterTab = 'all';
 
 // 4. Fuzzy Search
@@ -76,12 +129,13 @@ function fuzzyMatch(foodName, query) {
 
 // 5. Single Food Logging Modal
 function openModal(food, existingEntryId = null) {
+    cancelClose(modal);
     activeFoodToLog = food;
     activeDiaryEntryId = existingEntryId;
     modalName.textContent = food.name;
     const baseUnit = food.unit || 'g';
     modalBase.textContent = `${food.serving}${baseUnit}`;
-    
+
     modalInput.value = 1;
     modalUnitDropdown.classList.add('hidden');
 
@@ -116,7 +170,7 @@ function openModal(food, existingEntryId = null) {
 
     btnConfirmLog.textContent = existingEntryId ? 'Save Changes' : 'Log to Diary';
     updateModalMacros();
-    
+
     modal.classList.remove('hidden');
     requestAnimationFrame(() => {
         modal.classList.remove('opacity-0', 'pointer-events-none');
@@ -127,22 +181,20 @@ function openModal(food, existingEntryId = null) {
 function closeModal() {
     modal.classList.add('opacity-0', 'pointer-events-none');
     modalContent.classList.add('translate-y-full');
-    setTimeout(() => {
-        modal.classList.add('hidden');
-        activeFoodToLog = null;
-        activeDiaryEntryId = null;
-    }, 300);
+    activeFoodToLog = null;
+    activeDiaryEntryId = null;
+    finishClose(modal, () => modal.classList.add('hidden'));
 }
 
 if (btnModalUnitTrigger) {
-    btnModalUnitTrigger.addEventListener('click', (e) => {
+    bindClick(btnModalUnitTrigger, (e) => {
         e.stopPropagation();
         modalUnitDropdown.classList.toggle('hidden');
     });
 }
 
 if (modalUnitDropdownList) {
-    modalUnitDropdownList.addEventListener('click', (e) => {
+    bindClick(modalUnitDropdownList, (e) => {
         const btn = e.target.closest('.modal-unit-opt');
         if (!btn) return;
         modalUnitScaleValue.value = btn.getAttribute('data-scale');
@@ -175,63 +227,63 @@ function logFoodToState() {
     const today = getLocalDateString();
     const monthKey = today.substring(0, 7);
 
-    if (!appState.logs[monthKey]) appState.logs[monthKey] = {};
-    if (!appState.logs[monthKey][today]) {
-        appState.logs[monthKey][today] = { date: today, totals: { cal: 0, p: 0, c: 0, f: 0 }, diary: [] };
-    }
-
-    const dayLog = appState.logs[monthKey][today];
-
-    if (activeDiaryEntryId) {
-        const idx = dayLog.diary.findIndex(e => String(e.id) === String(activeDiaryEntryId));
-        if (idx !== -1) {
-            const old = dayLog.diary[idx];
-            dayLog.totals.cal -= old.cal;
-            dayLog.totals.p -= old.p;
-            dayLog.totals.c -= old.c;
-            dayLog.totals.f -= old.f;
-
-            old.amount = servings;
-            old.unit = selectedUnitText;
-            old.cal = Math.round(activeFoodToLog.cal * totalScale);
-            old.p = Math.round(activeFoodToLog.p * totalScale);
-            old.c = Math.round(activeFoodToLog.c * totalScale);
-            old.f = Math.round(activeFoodToLog.f * totalScale);
-
-            dayLog.totals.cal += old.cal;
-            dayLog.totals.p += old.p;
-            dayLog.totals.c += old.c;
-            dayLog.totals.f += old.f;
+    store.update(draft => {
+        if (!draft.logs[monthKey]) draft.logs[monthKey] = {};
+        if (!draft.logs[monthKey][today]) {
+            draft.logs[monthKey][today] = { date: today, totals: { cal: 0, p: 0, c: 0, f: 0 }, diary: [] };
         }
-    } else {
-        const entry = {
-            id: Date.now().toString(),
-            timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }),
-            foodId: activeFoodToLog.id,
-            name: activeFoodToLog.name,
-            amount: servings,
-            unit: selectedUnitText,
-            cal: Math.round(activeFoodToLog.cal * totalScale),
-            p: Math.round(activeFoodToLog.p * totalScale),
-            c: Math.round(activeFoodToLog.c * totalScale),
-            f: Math.round(activeFoodToLog.f * totalScale)
-        };
-        dayLog.diary.push(entry);
-        dayLog.totals.cal += entry.cal;
-        dayLog.totals.p += entry.p;
-        dayLog.totals.c += entry.c;
-        dayLog.totals.f += entry.f;
-    }
 
-    saveLocalState();
+        const dayLog = draft.logs[monthKey][today];
+
+        if (activeDiaryEntryId) {
+            const idx = dayLog.diary.findIndex(e => String(e.id) === String(activeDiaryEntryId));
+            if (idx !== -1) {
+                const old = dayLog.diary[idx];
+                dayLog.totals.cal -= old.cal;
+                dayLog.totals.p -= old.p;
+                dayLog.totals.c -= old.c;
+                dayLog.totals.f -= old.f;
+
+                old.amount = servings;
+                old.unit = selectedUnitText;
+                old.cal = Math.round(activeFoodToLog.cal * totalScale);
+                old.p = Math.round(activeFoodToLog.p * totalScale);
+                old.c = Math.round(activeFoodToLog.c * totalScale);
+                old.f = Math.round(activeFoodToLog.f * totalScale);
+
+                dayLog.totals.cal += old.cal;
+                dayLog.totals.p += old.p;
+                dayLog.totals.c += old.c;
+                dayLog.totals.f += old.f;
+            }
+        } else {
+            const entry = {
+                id: Date.now().toString(),
+                timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }),
+                foodId: activeFoodToLog.id,
+                name: activeFoodToLog.name,
+                amount: servings,
+                unit: selectedUnitText,
+                cal: Math.round(activeFoodToLog.cal * totalScale),
+                p: Math.round(activeFoodToLog.p * totalScale),
+                c: Math.round(activeFoodToLog.c * totalScale),
+                f: Math.round(activeFoodToLog.f * totalScale)
+            };
+            dayLog.diary.push(entry);
+            dayLog.totals.cal += entry.cal;
+            dayLog.totals.p += entry.p;
+            dayLog.totals.c += entry.c;
+            dayLog.totals.f += entry.f;
+        }
+    });
+
     closeModal();
-    renderDailyBrief();
 }
 
-modalInput.addEventListener('input', updateModalMacros);
-btnCancelLog.addEventListener('click', closeModal);
-btnConfirmLog.addEventListener('click', logFoodToState);
-document.getElementById('modal-backdrop').addEventListener('click', closeModal);
+listen(modalInput, 'input', updateModalMacros);
+bindClick(btnCancelLog, closeModal);
+bindClick(btnConfirmLog, logFoodToState);
+bindClick(document.getElementById('modal-backdrop'), closeModal);
 
 // 6. Search Dropdown & Skeleton Loader
 function createFoodButton(food, isExternal = false) {
@@ -246,19 +298,21 @@ function createFoodButton(food, isExternal = false) {
         </div>
         ${sourceTag}
     `;
-    
-    btn.addEventListener('click', () => {
+
+    bindClick(btn, () => {
+        cancelSearch();
         openModal(food);
-        searchInput.value = ''; 
+        searchInput.value = '';
         dropdown.classList.add('hidden');
         predictivePills.classList.remove('opacity-20');
-        searchInput.blur(); 
+        searchInput.blur();
     });
 
     return btn;
 }
 
-searchInput.addEventListener('input', async (e) => {
+listen(searchInput, 'input', async (e) => {
+    cancelSearch();
     const query = e.target.value;
     if (query.length === 0) {
         dropdown.classList.add('hidden');
@@ -269,9 +323,9 @@ searchInput.addEventListener('input', async (e) => {
     predictivePills.classList.add('opacity-20');
     dropdown.classList.remove('hidden');
 
-    const localMatches = appState.foodDatabase.filter(food => fuzzyMatch(food.name, query));
+    const localMatches = store.get().foodDatabase.filter(food => fuzzyMatch(food.name, query));
     resultsContainer.innerHTML = '';
-    
+
     localMatches.slice(0, 3).forEach(food => {
         resultsContainer.appendChild(createFoodButton(food, false));
     });
@@ -280,18 +334,29 @@ searchInput.addEventListener('input', async (e) => {
         const searchWebBtn = document.createElement('button');
         searchWebBtn.className = "w-full text-center px-5 py-4 text-sm font-bold text-blue-400 hover:text-blue-300 hover:bg-slate-700/30 transition";
         searchWebBtn.innerHTML = `Search global database for "${query}"...`;
-        
-        searchWebBtn.addEventListener('mousedown', async (ev) => {
-            ev.preventDefault(); 
+
+        bindClick(searchWebBtn, async (ev) => {
+            ev.preventDefault();
             // Skeleton Loader State
             resultsContainer.innerHTML = `
                 <div class="p-4 space-y-3">
                     <div class="h-12 bg-slate-800/60 rounded-xl animate-pulse"></div>
                     <div class="h-12 bg-slate-800/60 rounded-xl animate-pulse"></div>
                 </div>`;
-            const externalResults = await searchExternalDatabase(query);
+            cancelSearch();
+            const request = new AbortController();
+            searchRequest = request;
+            let externalResults;
+            try {
+                externalResults = await searchExternalDatabase(query, { signal: request.signal });
+            } catch (error) {
+                if (request.signal.aborted) return;
+                throw error;
+            }
+            if (request.signal.aborted || searchRequest !== request || searchInput.value !== query) return;
+            searchRequest = null;
             resultsContainer.innerHTML = '';
-            
+
             if (externalResults.length === 0) {
                 resultsContainer.innerHTML = `<div class="px-5 py-4 text-sm text-slate-400 italic text-center">No results found in global database.</div>`;
             } else {
@@ -305,24 +370,26 @@ searchInput.addEventListener('input', async (e) => {
     }
 });
 
-searchInput.addEventListener('focus', () => {
+listen(searchInput, 'focus', () => {
     if (searchInput.value.trim().length > 0 && resultsContainer.innerHTML !== '') {
         dropdown.classList.remove('hidden');
         predictivePills.classList.add('opacity-20');
     }
 });
 
-document.addEventListener('click', (e) => {
-    if (!searchInput.contains(e.target) && !dropdown.contains(e.target)) {
+function dismissSearch(e) {
+    const path = e.composedPath();
+    if (!path.includes(searchInput) && !path.includes(dropdown)) {
+        cancelSearch();
         dropdown.classList.add('hidden');
         predictivePills.classList.remove('opacity-20');
     }
-});
+}
 
 // 7. Pinned Recipe Pills (Quick Add)
 function renderPredictivePills() {
     if (!predictivePills) return;
-    const recipes = appState.recipes || [];
+    const recipes = store.get().recipes || [];
     const pinned = recipes.filter(r => r.pinned !== false);
     const displayList = pinned.length > 0 ? pinned : recipes.slice(0, 2);
 
@@ -334,11 +401,11 @@ function renderPredictivePills() {
 }
 
 if (predictivePills) {
-    predictivePills.addEventListener('click', (e) => {
+    bindClick(predictivePills, (e) => {
         const btn = e.target.closest('button[data-recipe-id]');
         if (!btn) return;
         const recId = btn.getAttribute('data-recipe-id');
-        const rec = appState.recipes.find(r => r.id === recId);
+        const rec = store.get().recipes.find(r => r.id === recId);
         if (rec) openRecipeModal(rec);
     });
 }
@@ -347,119 +414,11 @@ if (predictivePills) {
 function renderDailyBrief() {
     const today = getLocalDateString();
     const monthKey = today.substring(0, 7);
-    const dayLog = appState.logs[monthKey]?.[today] || { totals: { cal: 0, p: 0, c: 0, f: 0 }, diary: [] };
-    const targets = appState.targets;
-    
-    const dashboard = document.getElementById('macro-dashboard');
-    const calDiff = targets.cal - dayLog.totals.cal;
-    
-    const pPct = Math.min((dayLog.totals.p / targets.p) * 100, 100) || 0;
-    const cPct = Math.min((dayLog.totals.c / targets.c) * 100, 100) || 0;
-    const fPct = Math.min((dayLog.totals.f / targets.f) * 100, 100) || 0;
+    const state = store.get();
+    const dayLog = state.logs[monthKey]?.[today] || { totals: { cal: 0, p: 0, c: 0, f: 0 }, diary: [] };
+    const targets = state.targets;
 
-    const headerHTML = `
-        <div class="flex justify-between items-start mb-6">
-            <div>
-                <div class="text-sm font-bold text-slate-500 uppercase tracking-wider mb-1">Calories</div>
-                <div class="text-4xl font-bold text-white tracking-tight tabular-nums">${dayLog.totals.cal} <span class="text-lg text-slate-500 font-normal">/ ${targets.cal}</span></div>
-            </div>
-            <div class="flex flex-col items-end gap-2">
-                <button id="btn-toggle-view" class="p-2 bg-slate-800 rounded-xl text-slate-400 hover:text-white hover:bg-slate-700 transition active:scale-95" title="Toggle Rings / Bars / Hero Minimalist">
-                    <svg class="w-4 h-4 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z"></path></svg>
-                </button>
-                <div class="text-right">
-                    <div class="text-sm font-bold tabular-nums ${calDiff >= 0 ? 'text-emerald-400' : 'text-rose-400'}">${Math.abs(calDiff)}</div>
-                    <div class="text-[10px] text-slate-500 uppercase font-bold tracking-wider">${calDiff >= 0 ? 'Remaining' : 'Over'}</div>
-                </div>
-            </div>
-        </div>
-    `;
-
-    let visualsHTML = '';
-
-    if (currentDashboardView === 'rings') {
-        const pCirc = 2 * Math.PI * 42; 
-        const cCirc = 2 * Math.PI * 32;
-        const fCirc = 2 * Math.PI * 22;
-
-        visualsHTML = `
-            <div class="flex flex-col items-center justify-center pt-2 pb-2">
-                <div class="relative w-48 h-48 drop-shadow-xl">
-                    <svg viewBox="0 0 100 100" class="w-full h-full transform -rotate-90">
-                        <circle cx="50" cy="50" r="42" fill="transparent" stroke="#1e293b" stroke-width="7"></circle>
-                        <circle cx="50" cy="50" r="32" fill="transparent" stroke="#1e293b" stroke-width="7"></circle>
-                        <circle cx="50" cy="50" r="22" fill="transparent" stroke="#1e293b" stroke-width="7"></circle>
-                        
-                        <circle cx="50" cy="50" r="42" fill="transparent" stroke="#3b82f6" stroke-width="7" stroke-linecap="round" stroke-dasharray="${pCirc}" stroke-dashoffset="${pCirc - (pPct/100 * pCirc)}" class="transition-all duration-1000 ease-out" style="filter: drop-shadow(0 0 4px rgba(59,130,246,0.5));"></circle>
-                        <circle cx="50" cy="50" r="32" fill="transparent" stroke="#10b981" stroke-width="7" stroke-linecap="round" stroke-dasharray="${cCirc}" stroke-dashoffset="${cCirc - (cPct/100 * cCirc)}" class="transition-all duration-1000 ease-out" style="filter: drop-shadow(0 0 4px rgba(16,185,129,0.5));"></circle>
-                        <circle cx="50" cy="50" r="22" fill="transparent" stroke="#f43f5e" stroke-width="7" stroke-linecap="round" stroke-dasharray="${fCirc}" stroke-dashoffset="${fCirc - (fPct/100 * fCirc)}" class="transition-all duration-1000 ease-out" style="filter: drop-shadow(0 0 4px rgba(244,63,94,0.5));"></circle>
-                    </svg>
-                </div>
-                <div class="flex justify-center gap-6 w-full border-t border-slate-800/50 pt-5 mt-6">
-                    <div class="text-center">
-                        <div class="text-[10px] font-bold text-slate-500 mb-1 uppercase tracking-widest flex items-center justify-center gap-1.5"><span class="w-2 h-2 rounded-full bg-blue-500"></span> Pro</div>
-                        <div class="text-base font-bold text-slate-200 tabular-nums">${dayLog.totals.p}g <span class="text-xs text-slate-600 font-normal">/ ${targets.p}</span></div>
-                    </div>
-                    <div class="text-center">
-                        <div class="text-[10px] font-bold text-slate-500 mb-1 uppercase tracking-widest flex items-center justify-center gap-1.5"><span class="w-2 h-2 rounded-full bg-emerald-500"></span> Carb</div>
-                        <div class="text-base font-bold text-slate-200 tabular-nums">${dayLog.totals.c}g <span class="text-xs text-slate-600 font-normal">/ ${targets.c}</span></div>
-                    </div>
-                    <div class="text-center">
-                        <div class="text-[10px] font-bold text-slate-500 mb-1 uppercase tracking-widest flex items-center justify-center gap-1.5"><span class="w-2 h-2 rounded-full bg-rose-500"></span> Fat</div>
-                        <div class="text-base font-bold text-slate-200 tabular-nums">${dayLog.totals.f}g <span class="text-xs text-slate-600 font-normal">/ ${targets.f}</span></div>
-                    </div>
-                </div>
-            </div>
-        `;
-    } else if (currentDashboardView === 'bars') {
-        visualsHTML = `
-            <div class="space-y-4">
-                <div>
-                    <div class="flex justify-between text-xs font-bold mb-1"><span class="text-blue-400">Protein</span><span class="text-slate-300 tabular-nums">${dayLog.totals.p}g / ${targets.p}g</span></div>
-                    <div class="w-full bg-slate-800 rounded-full h-2 overflow-hidden"><div class="bg-blue-500 h-2 rounded-full transition-all duration-500 ease-out" style="width: ${pPct}%"></div></div>
-                </div>
-                <div>
-                    <div class="flex justify-between text-xs font-bold mb-1"><span class="text-emerald-400">Carbs</span><span class="text-slate-300 tabular-nums">${dayLog.totals.c}g / ${targets.c}g</span></div>
-                    <div class="w-full bg-slate-800 rounded-full h-2 overflow-hidden"><div class="bg-emerald-500 h-2 rounded-full transition-all duration-500 ease-out" style="width: ${cPct}%"></div></div>
-                </div>
-                <div>
-                    <div class="flex justify-between text-xs font-bold mb-1"><span class="text-rose-400">Fat</span><span class="text-slate-300 tabular-nums">${dayLog.totals.f}g / ${targets.f}g</span></div>
-                    <div class="w-full bg-slate-800 rounded-full h-2 overflow-hidden"><div class="bg-rose-500 h-2 rounded-full transition-all duration-500 ease-out" style="width: ${fPct}%"></div></div>
-                </div>
-            </div>
-        `;
-    } else {
-        // HERO MINIMALIST VIEW: Sized up with prominent ratios
-        visualsHTML = `
-            <div class="py-2">
-                <div class="grid grid-cols-3 gap-3">
-                    <div class="bg-slate-950/70 border border-white/[0.05] rounded-2xl p-4 text-center shadow-inner">
-                        <div class="text-[10px] font-bold uppercase tracking-widest text-blue-400 mb-1.5 flex items-center justify-center gap-1.5">
-                            <span class="w-2 h-2 rounded-full bg-blue-500"></span> Pro
-                        </div>
-                        <div class="text-2xl font-extrabold text-white tracking-tight tabular-nums">${dayLog.totals.p}</div>
-                        <div class="text-xs font-semibold text-slate-500 mt-0.5 tabular-nums">/ ${targets.p}g</div>
-                    </div>
-                    <div class="bg-slate-950/70 border border-white/[0.05] rounded-2xl p-4 text-center shadow-inner">
-                        <div class="text-[10px] font-bold uppercase tracking-widest text-emerald-400 mb-1.5 flex items-center justify-center gap-1.5">
-                            <span class="w-2 h-2 rounded-full bg-emerald-500"></span> Carb
-                        </div>
-                        <div class="text-2xl font-extrabold text-white tracking-tight tabular-nums">${dayLog.totals.c}</div>
-                        <div class="text-xs font-semibold text-slate-500 mt-0.5 tabular-nums">/ ${targets.c}g</div>
-                    </div>
-                    <div class="bg-slate-950/70 border border-white/[0.05] rounded-2xl p-4 text-center shadow-inner">
-                        <div class="text-[10px] font-bold uppercase tracking-widest text-rose-400 mb-1.5 flex items-center justify-center gap-1.5">
-                            <span class="w-2 h-2 rounded-full bg-rose-500"></span> Fat
-                        </div>
-                        <div class="text-2xl font-extrabold text-white tracking-tight tabular-nums">${dayLog.totals.f}</div>
-                        <div class="text-xs font-semibold text-slate-500 mt-0.5 tabular-nums">/ ${targets.f}g</div>
-                    </div>
-                </div>
-            </div>
-        `;
-    }
-
-    dashboard.innerHTML = headerHTML + visualsHTML;
+    dashboard.update(dayLog.totals, targets, currentDashboardView);
 
     // Render Diary Log (Elevated Empty State)
     const logContainer = document.getElementById('daily-log-container');
@@ -474,7 +433,7 @@ function renderDailyBrief() {
     }
 
     const sortedDiary = [...dayLog.diary].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
-    
+
     logContainer.innerHTML = sortedDiary.map(entry => {
         if (entry.isGroup && entry.items) {
             const nestedItemsHTML = entry.items.map(sub => `
@@ -486,7 +445,7 @@ function renderDailyBrief() {
 
             return `
                 <div class="bg-slate-900 rounded-2xl border border-white/[0.05] overflow-hidden transition group hover:border-slate-700">
-                    <div class="p-4 flex items-center justify-between cursor-pointer select-none" onclick="toggleGroupAccordion('${entry.id}')">
+                    <div class="p-4 flex items-center justify-between cursor-pointer select-none" data-action="toggle-group" data-id="${escapeAttribute(entry.id)}">
                         <div class="flex items-center gap-3">
                             <span id="chevron-${entry.id}" class="text-slate-500 transition-transform duration-200">
                                 <svg class="w-4 h-4 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path></svg>
@@ -506,10 +465,10 @@ function renderDailyBrief() {
                                 <span class="text-emerald-400">${entry.c} C</span>
                                 <span class="text-rose-400">${entry.f} F</span>
                             </div>
-                            <button onclick="event.stopPropagation(); editDiaryEntry('${entry.id}')" class="p-2 text-slate-500 hover:text-white hover:bg-slate-800 rounded-xl transition active:scale-95" title="Edit Meal">
+                            <button data-action="edit-diary-entry" data-id="${escapeAttribute(entry.id)}" class="p-2 text-slate-500 hover:text-white hover:bg-slate-800 rounded-xl transition active:scale-95" title="Edit Meal">
                                 <svg class="w-3.5 h-3.5 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"></path></svg>
                             </button>
-                            <button onclick="event.stopPropagation(); deleteDiaryEntry('${entry.id}')" class="p-2 text-slate-500 hover:text-rose-400 hover:bg-slate-800 rounded-xl transition active:scale-95" title="Delete">
+                            <button data-action="delete-diary-entry" data-id="${escapeAttribute(entry.id)}" class="p-2 text-slate-500 hover:text-rose-400 hover:bg-slate-800 rounded-xl transition active:scale-95" title="Delete">
                                 <svg class="w-3.5 h-3.5 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
                             </button>
                         </div>
@@ -536,10 +495,10 @@ function renderDailyBrief() {
                         <span class="text-emerald-400">${entry.c} C</span>
                         <span class="text-rose-400">${entry.f} F</span>
                     </div>
-                    <button onclick="editDiaryEntry('${entry.id}')" class="p-2 text-slate-500 hover:text-white hover:bg-slate-800 rounded-xl transition active:scale-95" title="Edit Amount">
+                    <button data-action="edit-diary-entry" data-id="${escapeAttribute(entry.id)}" class="p-2 text-slate-500 hover:text-white hover:bg-slate-800 rounded-xl transition active:scale-95" title="Edit Amount">
                         <svg class="w-3.5 h-3.5 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"></path></svg>
                     </button>
-                    <button onclick="deleteDiaryEntry('${entry.id}')" class="p-2 text-slate-500 hover:text-rose-400 hover:bg-slate-800 rounded-xl transition active:scale-95" title="Delete">
+                    <button data-action="delete-diary-entry" data-id="${escapeAttribute(entry.id)}" class="p-2 text-slate-500 hover:text-rose-400 hover:bg-slate-800 rounded-xl transition active:scale-95" title="Delete">
                         <svg class="w-3.5 h-3.5 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
                     </button>
                 </div>
@@ -548,7 +507,7 @@ function renderDailyBrief() {
     }).join('');
 }
 
-window.toggleGroupAccordion = function(id) {
+function toggleGroupAccordion(id) {
     const drawer = document.getElementById(`drawer-${id}`);
     const chevron = document.getElementById(`chevron-${id}`);
     if (drawer) {
@@ -557,30 +516,31 @@ window.toggleGroupAccordion = function(id) {
     }
 };
 
-window.deleteDiaryEntry = function(entryId) {
+function deleteDiaryEntry(entryId) {
     const today = getLocalDateString();
     const monthKey = today.substring(0, 7);
-    const dayLog = appState.logs[monthKey]?.[today];
-    if (!dayLog) return;
+    store.update(draft => {
+        const dayLog = draft.logs[monthKey]?.[today];
+        if (!dayLog) return;
 
-    const idx = dayLog.diary.findIndex(e => String(e.id) === String(entryId));
-    if (idx === -1) return;
+        const idx = dayLog.diary.findIndex(e => String(e.id) === String(entryId));
+        if (idx === -1) return;
 
-    const item = dayLog.diary[idx];
-    dayLog.totals.cal = Math.max(0, dayLog.totals.cal - item.cal);
-    dayLog.totals.p = Math.max(0, dayLog.totals.p - item.p);
-    dayLog.totals.c = Math.max(0, dayLog.totals.c - item.c);
-    dayLog.totals.f = Math.max(0, dayLog.totals.f - item.f);
-    
-    dayLog.diary.splice(idx, 1);
-    saveLocalState();
-    renderDailyBrief();
+        const item = dayLog.diary[idx];
+        dayLog.totals.cal = Math.max(0, dayLog.totals.cal - item.cal);
+        dayLog.totals.p = Math.max(0, dayLog.totals.p - item.p);
+        dayLog.totals.c = Math.max(0, dayLog.totals.c - item.c);
+        dayLog.totals.f = Math.max(0, dayLog.totals.f - item.f);
+
+        dayLog.diary.splice(idx, 1);
+    });
+
 };
 
-window.editDiaryEntry = function(entryId) {
+function editDiaryEntry(entryId) {
     const today = getLocalDateString();
     const monthKey = today.substring(0, 7);
-    const dayLog = appState.logs[monthKey]?.[today];
+    const dayLog = store.get().logs[monthKey]?.[today];
     if (!dayLog) return;
 
     const entry = dayLog.diary.find(e => String(e.id) === String(entryId));
@@ -604,7 +564,7 @@ window.editDiaryEntry = function(entryId) {
             }))
         }, entry.id);
     } else {
-        const food = appState.foodDatabase.find(f => String(f.id) === String(entry.foodId)) || {
+        const food = store.get().foodDatabase.find(f => String(f.id) === String(entry.foodId)) || {
             id: entry.foodId,
             name: entry.name,
             serving: 1,
@@ -620,15 +580,16 @@ window.editDiaryEntry = function(entryId) {
     }
 };
 
-document.getElementById('macro-dashboard').addEventListener('click', (e) => {
+bindClick(document.getElementById('macro-dashboard'), (e) => {
     if (e.target.closest('#btn-toggle-view')) {
         currentDashboardView = currentDashboardView === 'rings' ? 'bars' : currentDashboardView === 'bars' ? 'minimal' : 'rings';
         renderDailyBrief();
     }
 });
 
-document.addEventListener('visibilitychange', () => {
+listen(document, 'visibilitychange', () => {
     if (!document.hidden) renderDailyBrief();
+    else { cancelSearch(); void stopScanner().catch(error => console.error('Scanner cleanup failed:', error)); }
 });
 
 // 9. Barcode Scanner Engine
@@ -638,103 +599,120 @@ const btnCloseScanner = document.getElementById('btn-close-scanner');
 const scannerStatus = document.getElementById('scanner-status');
 let html5QrCode = null;
 let isProcessingScan = false;
+let scannerSession = null;
+let scannerQueue = Promise.resolve();
+let barcodeRequest = null;
 
-if (btnScanBarcode) {
-    btnScanBarcode.addEventListener('click', (e) => {
-        e.preventDefault(); 
-        scannerModal.classList.remove('hidden');
-        scannerStatus.innerHTML = "Requesting camera access...";
-        isProcessingScan = false;
-        
-        setTimeout(async () => {
-            try {
-                if (!html5QrCode) {
-                    const formats = window.Html5QrcodeSupportedFormats ? [ 
-                        window.Html5QrcodeSupportedFormats.UPC_A,
-                        window.Html5QrcodeSupportedFormats.UPC_E,
-                        window.Html5QrcodeSupportedFormats.EAN_13,
-                        window.Html5QrcodeSupportedFormats.EAN_8
-                    ] : undefined;
-
-                    html5QrCode = new Html5Qrcode("reader", formats ? { formatsToSupport: formats } : undefined);
-                }
-                
-                if (html5QrCode.isScanning) {
-                    await html5QrCode.stop();
-                }
-
-                await html5QrCode.start(
-                    { facingMode: "environment" },
-                    { fps: 15, qrbox: { width: 250, height: 150 } },
-                    onScanSuccess,
-                    (errorMessage) => { }
-                );
-                scannerStatus.innerHTML = "Position barcode in the center frame.";
-            } catch (err) {
-                scannerStatus.innerHTML = `<span class="text-rose-400">Camera access denied. Please allow permissions.</span>`;
-                console.error(err);
-            }
-        }, 350);
-    });
+async function clearScanner() {
+    const scanner = html5QrCode;
+    if (!scanner) return;
+    if (scanner.isScanning) await scanner.stop();
+    await scanner.clear();
+    if (html5QrCode === scanner) html5QrCode = null;
 }
-
-if (btnCloseScanner) btnCloseScanner.addEventListener('click', stopScanner);
-
-async function stopScanner() {
-    if (html5QrCode) {
-        try { await html5QrCode.stop(); } catch (e) {}
-    }
+function startScanner() {
+    cancelSearch();
+    scannerSession?.abort();
+    barcodeRequest?.abort();
+    const session = new AbortController();
+    scannerSession = session;
+    scannerModal.classList.remove('hidden');
+    scannerStatus.textContent = 'Requesting camera access...';
+    isProcessingScan = false;
+    scannerQueue = scannerQueue.catch(error => console.error('Scanner cleanup failed:', error)).then(async () => {
+        try {
+            await clearScanner();
+            await wait(350, session.signal);
+            const formats = globalThis.Html5QrcodeSupportedFormats;
+            html5QrCode = new Html5Qrcode('reader', formats ? { formatsToSupport: [formats.UPC_A, formats.UPC_E, formats.EAN_13, formats.EAN_8] } : undefined);
+            await html5QrCode.start(
+                { facingMode: 'environment' },
+                { fps: 15, qrbox: { width: 250, height: 150 } },
+                text => { if (!session.signal.aborted) void onScanSuccess(text); },
+                () => {}
+            );
+            if (session.signal.aborted) await clearScanner();
+            else scannerStatus.textContent = 'Position barcode in the center frame.';
+        } catch (error) {
+            await clearScanner();
+            if (!session.signal.aborted) {
+                scannerStatus.textContent = 'Camera unavailable. Check camera permissions and scanner library access.';
+                console.error(error);
+            }
+        }
+    });
+    return scannerQueue;
+}
+if (btnScanBarcode) bindClick(btnScanBarcode, startScanner);
+if (btnCloseScanner) bindClick(btnCloseScanner, stopScanner);
+function stopScanner() {
+    scannerSession?.abort();
+    scannerSession = null;
+    barcodeRequest?.abort();
+    barcodeRequest = null;
     scannerModal.classList.add('hidden');
     isProcessingScan = false;
+    // A pending start must settle before stop/clear can release its camera stream.
+    scannerQueue = scannerQueue.catch(error => console.error('Scanner startup failed:', error)).then(clearScanner);
+    return scannerQueue;
 }
 
 async function onScanSuccess(decodedText) {
-    if (isProcessingScan) return;
-    isProcessingScan = true; 
-    
+    if (isProcessingScan || !scannerSession || scannerSession.signal.aborted) return;
+    isProcessingScan = true;
+    const session = scannerSession;
+    const request = new AbortController();
+    barcodeRequest?.abort();
+    barcodeRequest = request;
+
     scannerStatus.innerHTML = `<span class="text-blue-400 font-bold animate-pulse">Found ${decodedText}... fetching nutrition!</span>`;
-    
+
     try {
         let paddedText = decodedText.length === 12 ? '0' + decodedText : decodedText;
 
-        let response = await fetch(`https://world.openfoodfacts.org/api/v0/product/${decodedText}.json`);
+        let response = await fetch(`https://world.openfoodfacts.org/api/v0/product/${encodeURIComponent(decodedText)}.json`, { signal: request.signal });
         let data = await response.json();
-        
+
         if (data.status !== 1 && decodedText.length === 12) {
-            response = await fetch(`https://world.openfoodfacts.org/api/v0/product/${paddedText}.json`);
+            response = await fetch(`https://world.openfoodfacts.org/api/v0/product/${encodeURIComponent(paddedText)}.json`, { signal: request.signal });
             data = await response.json();
         }
-        
+
+        if (request.signal.aborted || session !== scannerSession) return;
         if (data.status !== 1) throw new Error("Not Found in Global DB");
 
         const product = data.product;
         const nutriments = product.nutriments || {};
-        
+
         const scannedFood = {
             id: `off_${decodedText}`,
             name: product.product_name || "Unknown Product",
             category: "Scanned",
-            serving: 100, 
-            unit: "g", 
+            serving: 100,
+            unit: "g",
             cal: Math.round(nutriments['energy-kcal_100g'] || 0),
             p: Math.round(nutriments['proteins_100g'] || 0),
             c: Math.round(nutriments['carbohydrates_100g'] || 0),
             f: Math.round(nutriments['fat_100g'] || 0)
         };
 
-        if (!appState.foodDatabase.some(f => f.id === scannedFood.id)) {
-            appState.foodDatabase.push(scannedFood);
-            saveLocalState();
+        if (!store.get().foodDatabase.some(f => f.id === scannedFood.id)) {
+            store.update(draft => {
+                draft.foodDatabase.push(scannedFood);
+            });
+
         }
 
         await stopScanner();
-        openModal(scannedFood);
-        
+        if (!lifetime.signal.aborted && scannerSession === null) openModal(scannedFood);
+
     } catch (error) {
+        if (request.signal.aborted || session !== scannerSession) return;
         console.error(error);
         scannerStatus.innerHTML = `<span class="text-rose-400 font-bold">Item not found in global database.</span>`;
-        setTimeout(() => {
-            isProcessingScan = false; 
+        schedule(() => {
+            if (session !== scannerSession || session.signal.aborted) return;
+            isProcessingScan = false;
             scannerStatus.innerHTML = "Position barcode in the center frame.";
         }, 2500);
     }
@@ -748,6 +726,7 @@ const btnMenu = document.getElementById('btn-menu');
 const btnCloseDrawer = document.getElementById('btn-close-drawer');
 
 function openDrawer() {
+    cancelClose(drawerContainer);
     drawerContainer.classList.remove('pointer-events-none');
     drawerBackdrop.classList.remove('opacity-0', 'pointer-events-none');
     drawerPanel.classList.remove('translate-x-full');
@@ -758,12 +737,12 @@ function closeDrawer() {
     drawerBackdrop.classList.add('opacity-0', 'pointer-events-none');
     drawerPanel.classList.remove('translate-x-0');
     drawerPanel.classList.add('translate-x-full');
-    setTimeout(() => drawerContainer.classList.add('pointer-events-none'), 300);
+    finishClose(drawerContainer, () => drawerContainer.classList.add('pointer-events-none'));
 }
 
-btnMenu.addEventListener('click', (e) => { e.stopPropagation(); openDrawer(); });
-btnCloseDrawer.addEventListener('click', (e) => { e.stopPropagation(); closeDrawer(); });
-drawerBackdrop.addEventListener('click', closeDrawer);
+bindClick(btnMenu, (e) => { e.stopPropagation(); openDrawer(); });
+bindClick(btnCloseDrawer, (e) => { e.stopPropagation(); closeDrawer(); });
+bindClick(drawerBackdrop, closeDrawer);
 
 function switchView(targetViewId) {
     document.querySelectorAll('.app-view').forEach(view => view.classList.add('hidden'));
@@ -776,7 +755,7 @@ function switchView(targetViewId) {
 
     document.querySelectorAll('.drawer-nav-item').forEach(btn => {
         const isActive = btn.getAttribute('data-nav') === targetViewId;
-        btn.className = isActive 
+        btn.className = isActive
             ? 'drawer-nav-item w-full flex items-center gap-3 px-4 py-3 rounded-2xl text-sm font-semibold text-white bg-slate-800/70 hover:bg-slate-800 transition'
             : 'drawer-nav-item w-full flex items-center gap-3 px-4 py-3 rounded-2xl text-sm font-semibold text-slate-300 hover:text-white hover:bg-slate-800/50 transition';
     });
@@ -784,7 +763,7 @@ function switchView(targetViewId) {
 }
 
 document.querySelectorAll('.drawer-nav-item').forEach(item => {
-    item.addEventListener('click', () => {
+    bindClick(item, () => {
         const viewId = item.getAttribute('data-nav');
         if (viewId) switchView(viewId);
     });
@@ -823,13 +802,14 @@ function setCustomModalMode(mode) {
     }
 }
 
-if (tabModeFood) tabModeFood.addEventListener('click', () => setCustomModalMode('food'));
-if (tabModeRecipe) tabModeRecipe.addEventListener('click', () => setCustomModalMode('recipe'));
+if (tabModeFood) bindClick(tabModeFood, () => setCustomModalMode('food'));
+if (tabModeRecipe) bindClick(tabModeRecipe, () => setCustomModalMode('recipe'));
 
 function openCustomFoodModal(itemToEdit = null, isRecipe = false) {
+    cancelClose(customFoodModal);
     customFoodForm.reset();
     document.getElementById('custom-type-tabs').classList.remove('hidden');
-    
+
     if (customUnitDropdown) customUnitDropdown.classList.add('hidden');
     if (recipeFoodDropdown) recipeFoodDropdown.classList.add('hidden');
 
@@ -871,7 +851,7 @@ function openCustomFoodModal(itemToEdit = null, isRecipe = false) {
         document.getElementById('selected-recipe-food-label').classList.add('text-slate-400');
         document.getElementById('selected-recipe-food-label').classList.remove('text-white');
     }
-    
+
     customFoodModal.classList.remove('hidden');
     requestAnimationFrame(() => {
         customFoodModal.classList.remove('opacity-0', 'pointer-events-none');
@@ -880,19 +860,17 @@ function openCustomFoodModal(itemToEdit = null, isRecipe = false) {
 
 function closeCustomFoodModal() {
     customFoodModal.classList.add('opacity-0', 'pointer-events-none');
-    setTimeout(() => {
-        customFoodModal.classList.add('hidden');
-    }, 300);
+    finishClose(customFoodModal, () => customFoodModal.classList.add('hidden'));
 }
 
-if (btnOpenAddFood) btnOpenAddFood.addEventListener('click', () => openCustomFoodModal());
-if (btnCloseCustomModal) btnCloseCustomModal.addEventListener('click', closeCustomFoodModal);
-if (btnCancelCustomFood) btnCancelCustomFood.addEventListener('click', closeCustomFoodModal);
-if (btnCancelCustomRecipe) btnCancelCustomRecipe.addEventListener('click', closeCustomFoodModal);
-if (customFoodBackdrop) customFoodBackdrop.addEventListener('click', closeCustomFoodModal);
+if (btnOpenAddFood) bindClick(btnOpenAddFood, () => openCustomFoodModal());
+if (btnCloseCustomModal) bindClick(btnCloseCustomModal, closeCustomFoodModal);
+if (btnCancelCustomFood) bindClick(btnCancelCustomFood, closeCustomFoodModal);
+if (btnCancelCustomRecipe) bindClick(btnCancelCustomRecipe, closeCustomFoodModal);
+if (customFoodBackdrop) bindClick(customFoodBackdrop, closeCustomFoodModal);
 
 // Save Single Food
-customFoodForm.addEventListener('submit', (e) => {
+listen(customFoodForm, 'submit', (e) => {
     e.preventDefault();
     const foodId = document.getElementById('custom-food-id').value;
     const foodPayload = {
@@ -906,16 +884,16 @@ customFoodForm.addEventListener('submit', (e) => {
         f: Math.round(parseFloat(document.getElementById('custom-food-f').value) || 0)
     };
 
-    if (foodId) {
-        const index = appState.foodDatabase.findIndex(f => String(f.id) === String(foodId));
-        if (index !== -1) appState.foodDatabase[index] = foodPayload;
-    } else {
-        appState.foodDatabase.unshift(foodPayload);
-    }
+    store.update(draft => {
+        if (foodId) {
+            const index = draft.foodDatabase.findIndex(f => String(f.id) === String(foodId));
+            if (index !== -1) draft.foodDatabase[index] = foodPayload;
+        } else {
+            draft.foodDatabase.unshift(foodPayload);
+        }
+    });
 
-    saveLocalState();
     closeCustomFoodModal();
-    renderDatabaseView(document.getElementById('db-filter-input')?.value || '');
 });
 
 // Custom Dropdowns Engine for Food Units
@@ -925,12 +903,12 @@ const customFoodUnitHidden = document.getElementById('custom-food-unit');
 const selectedUnitLabel = document.getElementById('selected-unit-label');
 
 if (btnUnitTrigger) {
-    btnUnitTrigger.addEventListener('click', (e) => {
+    bindClick(btnUnitTrigger, (e) => {
         e.stopPropagation();
         customUnitDropdown.classList.toggle('hidden');
     });
 
-    customUnitDropdown.addEventListener('click', (e) => {
+    bindClick(customUnitDropdown, (e) => {
         const opt = e.target.closest('.unit-opt');
         if (!opt) return;
         customFoodUnitHidden.value = opt.getAttribute('data-val');
@@ -948,8 +926,8 @@ const selectedRecipeFoodLabel = document.getElementById('selected-recipe-food-la
 
 function populateIngredientPicker() {
     if (!recipeFoodDropdownList) return;
-    const db = appState.foodDatabase || [];
-    
+    const db = store.get().foodDatabase || [];
+
     if (db.length === 0) {
         recipeFoodDropdownList.innerHTML = `<div class="p-3 text-xs text-slate-500 italic text-center">No foods in database.</div>`;
         return;
@@ -964,13 +942,13 @@ function populateIngredientPicker() {
 }
 
 if (btnRecipeFoodTrigger) {
-    btnRecipeFoodTrigger.addEventListener('click', (e) => {
+    bindClick(btnRecipeFoodTrigger, (e) => {
         e.stopPropagation();
         populateIngredientPicker();
         recipeFoodDropdown.classList.toggle('hidden');
     });
 
-    recipeFoodDropdown.addEventListener('click', (e) => {
+    bindClick(recipeFoodDropdown, (e) => {
         const opt = e.target.closest('.recipe-food-opt');
         if (!opt) return;
         recipeSelectedFoodId.value = opt.getAttribute('data-id');
@@ -981,20 +959,21 @@ if (btnRecipeFoodTrigger) {
     });
 }
 
-document.addEventListener('click', () => {
+function dismissDropdowns(e) {
+    if (e.cancelBubble) return;
     if (customUnitDropdown) customUnitDropdown.classList.add('hidden');
     if (recipeFoodDropdown) recipeFoodDropdown.classList.add('hidden');
     if (modalUnitDropdown) modalUnitDropdown.classList.add('hidden');
     const tunerDrop = document.getElementById('tuner-food-dropdown');
     if (tunerDrop) tunerDrop.classList.add('hidden');
-});
+}
 
 // Recipe Builder Logic
 const btnAddIngToRecipe = document.getElementById('btn-add-ing-to-recipe');
 if (btnAddIngToRecipe) {
-    btnAddIngToRecipe.addEventListener('click', () => {
+    bindClick(btnAddIngToRecipe, () => {
         const selectedId = recipeSelectedFoodId.value;
-        const food = appState.foodDatabase.find(f => String(f.id) === String(selectedId));
+        const food = store.get().foodDatabase.find(f => String(f.id) === String(selectedId));
         if (!food) return;
 
         recipeBuilderIngredients.push({
@@ -1044,7 +1023,7 @@ function renderRecipeBuilderList() {
             <div class="flex items-center gap-2">
                 <input type="number" step="any" value="${item.amount}" data-builder-idx="${idx}" class="builder-ing-input w-16 bg-slate-900 border border-slate-700 rounded-lg py-1 text-center font-bold text-white focus:outline-none">
                 <span class="text-slate-400 w-5">${item.unit}</span>
-                <button type="button" onclick="removeBuilderIng(${idx})" class="text-slate-500 hover:text-rose-400 p-1">✕</button>
+                <button type="button" data-action="remove-builder-ingredient" data-id="${idx}" class="text-slate-500 hover:text-rose-400 p-1">✕</button>
             </div>
         </div>
     `).join('');
@@ -1054,7 +1033,7 @@ function renderRecipeBuilderList() {
 
 const recipeBuilderIngredientsContainer = document.getElementById('recipe-builder-ingredients');
 if (recipeBuilderIngredientsContainer) {
-    recipeBuilderIngredientsContainer.addEventListener('input', (e) => {
+    listen(recipeBuilderIngredientsContainer, 'input', (e) => {
         const input = e.target.closest('.builder-ing-input');
         if (!input) return;
         const idx = parseInt(input.getAttribute('data-builder-idx'), 10);
@@ -1065,39 +1044,38 @@ if (recipeBuilderIngredientsContainer) {
     });
 }
 
-window.removeBuilderIng = function(idx) {
+function removeBuilderIng(idx) {
     recipeBuilderIngredients.splice(idx, 1);
     renderRecipeBuilderList();
 };
 
 const btnSaveCustomRecipe = document.getElementById('btn-save-custom-recipe');
 if (btnSaveCustomRecipe) {
-    btnSaveCustomRecipe.addEventListener('click', () => {
+    bindClick(btnSaveCustomRecipe, () => {
         const name = document.getElementById('custom-recipe-name').value.trim();
         const editId = document.getElementById('custom-recipe-id').value;
         if (!name) return alert("Please enter a recipe name.");
         if (recipeBuilderIngredients.length === 0) return alert("Please add at least one ingredient.");
 
-        if (editId) {
-            const idx = appState.recipes.findIndex(r => String(r.id) === String(editId));
-            if (idx !== -1) {
-                appState.recipes[idx].name = name;
-                appState.recipes[idx].ingredients = [...recipeBuilderIngredients];
+        store.update(draft => {
+            if (editId) {
+                const idx = draft.recipes.findIndex(r => String(r.id) === String(editId));
+                if (idx !== -1) {
+                    draft.recipes[idx].name = name;
+                    draft.recipes[idx].ingredients = [...recipeBuilderIngredients];
+                }
+            } else {
+                const recipePayload = {
+                    id: `rec_${Date.now()}`,
+                    name: name,
+                    pinned: true,
+                    ingredients: [...recipeBuilderIngredients]
+                };
+                draft.recipes.push(recipePayload);
             }
-        } else {
-            const recipePayload = {
-                id: `rec_${Date.now()}`,
-                name: name,
-                pinned: true,
-                ingredients: [...recipeBuilderIngredients]
-            };
-            appState.recipes.push(recipePayload);
-        }
+        });
 
-        saveLocalState();
         closeCustomFoodModal();
-        renderPredictivePills();
-        renderDatabaseView();
     });
 }
 
@@ -1107,12 +1085,12 @@ const dbFilterInput = document.getElementById('db-filter-input');
 const dbCategoryTabs = document.getElementById('db-category-tabs');
 
 if (dbCategoryTabs) {
-    dbCategoryTabs.addEventListener('click', (e) => {
+    bindClick(dbCategoryTabs, (e) => {
         const btn = e.target.closest('.db-tab-btn');
         if (!btn) return;
         currentDbFilterTab = btn.getAttribute('data-filter');
         document.querySelectorAll('.db-tab-btn').forEach(b => {
-            b.className = b === btn 
+            b.className = b === btn
                 ? 'db-tab-btn flex-1 py-2 text-xs font-bold rounded-xl bg-slate-800 text-white transition'
                 : 'db-tab-btn flex-1 py-2 text-xs font-bold rounded-xl text-slate-400 hover:text-white transition';
         });
@@ -1123,8 +1101,9 @@ if (dbCategoryTabs) {
 function renderDatabaseView(filterQuery = '') {
     if (!dbListContainer) return;
     const q = filterQuery.toLowerCase().trim();
-    const foods = (appState.foodDatabase || []).map(f => ({ ...f, type: 'food' }));
-    const recipes = (appState.recipes || []).map(r => ({ ...r, type: 'recipe' }));
+    const state = store.get();
+    const foods = (state.foodDatabase || []).map(f => ({ ...f, type: 'food' }));
+    const recipes = (state.recipes || []).map(r => ({ ...r, type: 'recipe' }));
 
     let combined = [];
     if (currentDbFilterTab === 'all') combined = [...recipes, ...foods];
@@ -1199,57 +1178,53 @@ function renderDatabaseView(filterQuery = '') {
     }).join('');
 }
 
-if (dbListContainer) {
-    dbListContainer.addEventListener('click', (e) => {
+function databaseAction(e) {
         const btn = e.target.closest('button[data-action]');
         if (!btn) return;
         const action = btn.getAttribute('data-action');
         const id = btn.getAttribute('data-id');
 
         if (action === 'edit-food') {
-            const food = appState.foodDatabase.find(f => String(f.id) === String(id));
+            const food = store.get().foodDatabase.find(f => String(f.id) === String(id));
             if (food) openCustomFoodModal(food, false);
         } else if (action === 'delete-food') {
-            const food = appState.foodDatabase.find(f => String(f.id) === String(id));
+            const food = store.get().foodDatabase.find(f => String(f.id) === String(id));
             if (food && confirm(`Delete "${food.name}" from your database?`)) {
-                appState.foodDatabase = appState.foodDatabase.filter(f => String(f.id) !== String(id));
-                saveLocalState();
-                renderDatabaseView(dbFilterInput?.value || '');
+                store.update(draft => { draft.foodDatabase = draft.foodDatabase.filter(f => String(f.id) !== String(id)); });
+
             }
         } else if (action === 'log-food') {
-            const food = appState.foodDatabase.find(f => String(f.id) === String(id));
+            const food = store.get().foodDatabase.find(f => String(f.id) === String(id));
             if (food) {
                 switchView('view-home');
                 openModal(food);
             }
         } else if (action === 'pin') {
-            const rec = appState.recipes.find(r => String(r.id) === String(id));
+            const rec = store.get().recipes.find(r => String(r.id) === String(id));
             if (rec) {
-                rec.pinned = rec.pinned === false ? true : false;
-                saveLocalState();
-                renderPredictivePills();
-                renderDatabaseView(dbFilterInput?.value || '');
+                store.update(draft => {
+                    const recipe = draft.recipes.find(r => String(r.id) === String(id));
+                    recipe.pinned = recipe.pinned === false;
+                });
+
             }
         } else if (action === 'edit-recipe') {
-            const rec = appState.recipes.find(r => String(r.id) === String(id));
+            const rec = store.get().recipes.find(r => String(r.id) === String(id));
             if (rec) openCustomFoodModal(rec, true);
         } else if (action === 'delete-recipe') {
-            const rec = appState.recipes.find(r => String(r.id) === String(id));
+            const rec = store.get().recipes.find(r => String(r.id) === String(id));
             if (rec && confirm(`Delete recipe "${rec.name}"?`)) {
-                appState.recipes = appState.recipes.filter(r => String(r.id) !== String(id));
-                saveLocalState();
-                renderPredictivePills();
-                renderDatabaseView(dbFilterInput?.value || '');
+                store.update(draft => { draft.recipes = draft.recipes.filter(r => String(r.id) !== String(id)); });
+
             }
         } else if (action === 'log-recipe') {
-            const rec = appState.recipes.find(r => String(r.id) === String(id));
+            const rec = store.get().recipes.find(r => String(r.id) === String(id));
             if (rec) openRecipeModal(rec);
         }
-    });
 }
 
 if (dbFilterInput) {
-    dbFilterInput.addEventListener('input', (e) => renderDatabaseView(e.target.value));
+    listen(dbFilterInput, 'input', (e) => renderDatabaseView(e.target.value));
 }
 
 // 13. Tunable Meal Group / Recipe Sheet Engine
@@ -1270,14 +1245,15 @@ const tunerFoodDropdown = document.getElementById('tuner-food-dropdown');
 const tunerFoodDropdownList = document.getElementById('tuner-food-dropdown-list');
 
 function openRecipeModal(recipe, existingLogEntryId = null) {
+    cancelClose(recipeModal);
     activeRecipe = JSON.parse(JSON.stringify(recipe));
     activeRecipeLogEntryId = existingLogEntryId;
     recipeModalName.textContent = activeRecipe.name;
     btnConfirmRecipe.textContent = existingLogEntryId ? 'Update Meal Log' : 'Log Meal Group';
     if (tunerFoodDropdown) tunerFoodDropdown.classList.add('hidden');
-    
+
     renderRecipeIngredients();
-    
+
     recipeModal.classList.remove('hidden');
     requestAnimationFrame(() => {
         recipeModal.classList.remove('opacity-0', 'pointer-events-none');
@@ -1288,11 +1264,9 @@ function openRecipeModal(recipe, existingLogEntryId = null) {
 function closeRecipeModal() {
     recipeModal.classList.add('opacity-0', 'pointer-events-none');
     if (recipeModalContent) recipeModalContent.classList.add('translate-y-full');
-    setTimeout(() => {
-        recipeModal.classList.add('hidden');
-        activeRecipe = null;
-        activeRecipeLogEntryId = null;
-    }, 300);
+    activeRecipe = null;
+    activeRecipeLogEntryId = null;
+    finishClose(recipeModal, () => recipeModal.classList.add('hidden'));
 }
 
 function updateRecipeTotals() {
@@ -1358,7 +1332,7 @@ function renderRecipeIngredients() {
                 </div>
                 <div class="flex items-center gap-2">
                     <input type="number" step="any" value="${item.amount}" data-tuner-idx="${idx}" class="recipe-tuner-input w-20 bg-slate-900 border border-slate-700 rounded-xl py-1.5 text-center text-sm font-bold text-white tabular-nums focus:outline-none focus:border-blue-500">
-                    
+
                     <div class="relative">
                         <select data-ingredient-idx="${idx}" class="recipe-ing-unit bg-slate-900 border border-slate-700 text-xs text-slate-300 font-semibold rounded-xl py-1.5 pl-2 pr-6 appearance-none focus:outline-none focus:border-blue-500 cursor-pointer">
                             ${unitOptions}
@@ -1368,7 +1342,7 @@ function renderRecipeIngredients() {
                         </div>
                     </div>
 
-                    <button type="button" onclick="removeTunerIngredient(${idx})" class="p-1 text-slate-500 hover:text-rose-400 transition" title="Remove from this meal">
+                    <button type="button" data-action="remove-tuner-ingredient" data-id="${idx}" class="p-1 text-slate-500 hover:text-rose-400 transition" title="Remove from this meal">
                         ✕
                     </button>
                 </div>
@@ -1381,7 +1355,7 @@ function renderRecipeIngredients() {
 
 // Focus-preserving input listener for Recipe Tuner
 if (recipeIngredientsList) {
-    recipeIngredientsList.addEventListener('input', (e) => {
+    listen(recipeIngredientsList, 'input', (e) => {
         const input = e.target.closest('.recipe-tuner-input');
         if (!input || !activeRecipe) return;
         const idx = parseInt(input.getAttribute('data-tuner-idx'), 10);
@@ -1391,7 +1365,7 @@ if (recipeIngredientsList) {
         }
     });
 
-    recipeIngredientsList.addEventListener('change', (e) => {
+    listen(recipeIngredientsList, 'change', (e) => {
         const select = e.target.closest('.recipe-ing-unit');
         if (!select || !activeRecipe) return;
         const idx = parseInt(select.getAttribute('data-ingredient-idx'), 10);
@@ -1416,16 +1390,16 @@ if (recipeIngredientsList) {
     });
 }
 
-window.removeTunerIngredient = function(idx) {
+function removeTunerIngredient(idx) {
     if (!activeRecipe || !activeRecipe.ingredients[idx]) return;
     activeRecipe.ingredients.splice(idx, 1);
     renderRecipeIngredients();
 };
 
 if (btnTunerAddTrigger) {
-    btnTunerAddTrigger.addEventListener('click', (e) => {
+    bindClick(btnTunerAddTrigger, (e) => {
         e.stopPropagation();
-        const db = appState.foodDatabase || [];
+        const db = store.get().foodDatabase || [];
         if (!tunerFoodDropdownList) return;
 
         if (db.length === 0) {
@@ -1443,11 +1417,11 @@ if (btnTunerAddTrigger) {
 }
 
 if (tunerFoodDropdownList) {
-    tunerFoodDropdownList.addEventListener('click', (e) => {
+    bindClick(tunerFoodDropdownList, (e) => {
         const btn = e.target.closest('.tuner-add-food-opt');
         if (!btn || !activeRecipe) return;
         const id = btn.getAttribute('data-id');
-        const food = appState.foodDatabase.find(f => String(f.id) === String(id));
+        const food = store.get().foodDatabase.find(f => String(f.id) === String(id));
         if (food) {
             activeRecipe.ingredients.push({
                 id: food.id,
@@ -1467,104 +1441,132 @@ if (tunerFoodDropdownList) {
     });
 }
 
-if (btnCancelRecipe) btnCancelRecipe.addEventListener('click', closeRecipeModal);
-if (recipeBackdrop) recipeBackdrop.addEventListener('click', closeRecipeModal);
+if (btnCancelRecipe) bindClick(btnCancelRecipe, closeRecipeModal);
+if (recipeBackdrop) bindClick(recipeBackdrop, closeRecipeModal);
 
 if (btnConfirmRecipe) {
-    btnConfirmRecipe.addEventListener('click', () => {
+    bindClick(btnConfirmRecipe, () => {
         if (!activeRecipe) return;
         const today = getLocalDateString();
         const monthKey = today.substring(0, 7);
         const timeNow = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
 
-        if (!appState.logs[monthKey]) appState.logs[monthKey] = {};
-        if (!appState.logs[monthKey][today]) {
-            appState.logs[monthKey][today] = { date: today, totals: { cal: 0, p: 0, c: 0, f: 0 }, diary: [] };
-        }
-
-        const dayLog = appState.logs[monthKey][today];
-        let totalCal = 0, totalP = 0, totalC = 0, totalF = 0;
-        const nestedItems = [];
-
-        activeRecipe.ingredients.forEach(item => {
-            if (item.amount <= 0) return;
-            const unit = item.activeUnit || item.baseUnit || item.unit || 'g';
-            let ratio = 1;
-
-            if (unit === 'g') {
-                ratio = item.amount / (item.baseServing || 100);
-            } else if (unit === 'oz') {
-                ratio = (item.amount * 28.35) / (item.baseServing || 100);
-            } else if (unit === 'serving') {
-                ratio = item.amount;
-            } else {
-                ratio = item.amount / (item.baseServing || 1);
+        store.update(draft => {
+            if (!draft.logs[monthKey]) draft.logs[monthKey] = {};
+            if (!draft.logs[monthKey][today]) {
+                draft.logs[monthKey][today] = { date: today, totals: { cal: 0, p: 0, c: 0, f: 0 }, diary: [] };
             }
 
-            const cal = Math.round(item.cal * ratio);
-            const p = Math.round(item.p * ratio);
-            const c = Math.round(item.c * ratio);
-            const f = Math.round(item.f * ratio);
+            const dayLog = draft.logs[monthKey][today];
+            let totalCal = 0, totalP = 0, totalC = 0, totalF = 0;
+            const nestedItems = [];
 
-            totalCal += cal;
-            totalP += p;
-            totalC += c;
-            totalF += f;
+            activeRecipe.ingredients.forEach(item => {
+                if (item.amount <= 0) return;
+                const unit = item.activeUnit || item.baseUnit || item.unit || 'g';
+                let ratio = 1;
 
-            nestedItems.push({
-                id: item.id,
-                name: item.name,
-                amount: item.amount,
-                unit: unit,
-                cal, p, c, f
+                if (unit === 'g') {
+                    ratio = item.amount / (item.baseServing || 100);
+                } else if (unit === 'oz') {
+                    ratio = (item.amount * 28.35) / (item.baseServing || 100);
+                } else if (unit === 'serving') {
+                    ratio = item.amount;
+                } else {
+                    ratio = item.amount / (item.baseServing || 1);
+                }
+
+                const cal = Math.round(item.cal * ratio);
+                const p = Math.round(item.p * ratio);
+                const c = Math.round(item.c * ratio);
+                const f = Math.round(item.f * ratio);
+
+                totalCal += cal;
+                totalP += p;
+                totalC += c;
+                totalF += f;
+
+                nestedItems.push({
+                    id: item.id,
+                    name: item.name,
+                    amount: item.amount,
+                    unit: unit,
+                    cal, p, c, f
+                });
             });
-        });
 
-        if (activeRecipeLogEntryId) {
-            const idx = dayLog.diary.findIndex(e => String(e.id) === String(activeRecipeLogEntryId));
-            if (idx !== -1) {
-                const old = dayLog.diary[idx];
-                dayLog.totals.cal -= old.cal;
-                dayLog.totals.p -= old.p;
-                dayLog.totals.c -= old.c;
-                dayLog.totals.f -= old.f;
+            if (activeRecipeLogEntryId) {
+                const idx = dayLog.diary.findIndex(e => String(e.id) === String(activeRecipeLogEntryId));
+                if (idx !== -1) {
+                    const old = dayLog.diary[idx];
+                    dayLog.totals.cal -= old.cal;
+                    dayLog.totals.p -= old.p;
+                    dayLog.totals.c -= old.c;
+                    dayLog.totals.f -= old.f;
 
-                old.items = nestedItems;
-                old.cal = totalCal;
-                old.p = totalP;
-                old.c = totalC;
-                old.f = totalF;
+                    old.items = nestedItems;
+                    old.cal = totalCal;
+                    old.p = totalP;
+                    old.c = totalC;
+                    old.f = totalF;
 
+                    dayLog.totals.cal += totalCal;
+                    dayLog.totals.p += totalP;
+                    dayLog.totals.c += totalC;
+                    dayLog.totals.f += totalF;
+                }
+            } else {
+                const groupEntry = {
+                    id: `grp_${Date.now()}`,
+                    timestamp: timeNow,
+                    name: activeRecipe.name,
+                    isGroup: true,
+                    items: nestedItems,
+                    cal: totalCal,
+                    p: totalP,
+                    c: totalC,
+                    f: totalF
+                };
+                dayLog.diary.push(groupEntry);
                 dayLog.totals.cal += totalCal;
                 dayLog.totals.p += totalP;
                 dayLog.totals.c += totalC;
                 dayLog.totals.f += totalF;
             }
-        } else {
-            const groupEntry = {
-                id: `grp_${Date.now()}`,
-                timestamp: timeNow,
-                name: activeRecipe.name,
-                isGroup: true,
-                items: nestedItems,
-                cal: totalCal,
-                p: totalP,
-                c: totalC,
-                f: totalF
-            };
-            dayLog.diary.push(groupEntry);
-            dayLog.totals.cal += totalCal;
-            dayLog.totals.p += totalP;
-            dayLog.totals.c += totalC;
-            dayLog.totals.f += totalF;
-        }
+        });
 
-        saveLocalState();
         closeRecipeModal();
-        renderDailyBrief();
     });
 }
+
+const router = createRouter({
+    ui: ({ event, element }) => clickHandlers.get(element)?.(event),
+    'toggle-group': ({ id }) => toggleGroupAccordion(id),
+    'edit-diary-entry': ({ id }) => editDiaryEntry(id),
+    'delete-diary-entry': ({ id }) => deleteDiaryEntry(id),
+    'remove-builder-ingredient': ({ id }) => removeBuilderIng(Number(id)),
+    'remove-tuner-ingredient': ({ id }) => removeTunerIngredient(Number(id)),
+    ...Object.fromEntries(['edit-food', 'delete-food', 'log-food', 'pin', 'edit-recipe', 'delete-recipe', 'log-recipe']
+        .map(action => [action, ({ event }) => databaseAction(event)]))
+}, { afterDispatch: event => { dismissSearch(event); dismissDropdowns(event); } });
+
+const unsubscribe = store.subscribe(() => {
+    renderPredictivePills();
+    renderDailyBrief();
+    renderDatabaseView(dbFilterInput?.value || '');
+});
 
 // 14. Initial App Boot
 renderPredictivePills();
 renderDailyBrief();
+listen(globalThis, 'pagehide', event => {
+    cancelSearch();
+    void stopScanner().catch(error => console.error('Scanner teardown failed:', error));
+    if (!event.persisted) {
+        unsubscribe();
+        router.destroy();
+        lifetime.abort();
+        for (const timer of timers) clearTimeout(timer);
+        timers.clear();
+    }
+});

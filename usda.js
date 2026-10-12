@@ -7,11 +7,11 @@ function getNutrient(nutrientsArray, nutrientId) {
     return nutrient ? nutrient.value : 0; // Return exact decimal for math
 }
 
-export async function searchExternalDatabase(query) {
+export async function searchExternalDatabase(query, { signal } = {}) {
     try {
         // requireAllWords=true strictly forces the API to only return items matching ALL typed words
         const url = `${BASE_URL}?api_key=${API_KEY}&query=${encodeURIComponent(query)}&requireAllWords=true&pageSize=40`;
-        const response = await fetch(url);
+        const response = await fetch(url, { signal });
         
         if (!response.ok) {
             console.error("❌ USDA API Error:", response.status, response.statusText);
@@ -82,6 +82,7 @@ export async function searchExternalDatabase(query) {
         return uniqueResults.slice(0, 6);
         
     } catch (error) {
+        if (signal?.aborted || error.name === 'AbortError') throw error;
         console.error("❌ USDA API Request Failed:", error);
         return [];
     }

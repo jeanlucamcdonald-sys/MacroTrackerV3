@@ -4,7 +4,7 @@ Phase 1 is implemented in the running app. Phase 2's cached dashboard remains in
 
 ## State
 
-`state.js` exports `store`, not `appState` or `setAppState`. It restores the existing `macroTrackerPro_State_v2` localStorage data, fills structural defaults, validates it, and creates the store:
+`state.js` exports `store`, not `appState` or `setAppState`. It migrates the existing `macroTrackerPro_State_v2` JSON into an account-scoped IndexedDB device cache, fills structural defaults, validates it, and creates the store:
 
 ```js
 import { createStore } from './store.js';
@@ -14,7 +14,7 @@ export const store = createStore(loadLocalState(), {
 });
 ```
 
-`store.get()` returns a detached snapshot. `store.update(draft => { ... })` clones a draft, rejects async/nested mutations, validates the result, writes it to localStorage, and notifies subscribers. A mutator, validation, or storage error leaves the prior state intact. Each subscriber receives its own snapshot; one subscriber failure does not prevent other notifications. `subscribe(fn)` returns an unsubscribe function. Subscribers should render rather than start nested updates.
+`store.get()` returns a detached snapshot. `store.update(draft => { ... })` clones a draft, rejects async/nested mutations, validates the result, queues its IndexedDB save, and notifies subscribers. Mutator and validation errors leave prior state intact. Device writes are asynchronous; failures are reported in the account UI, with the in-memory copy available for export. Firebase-backed persistence and recovery are described in [firebase-migration.md](firebase-migration.md). Each subscriber receives its own snapshot; one subscriber failure does not prevent other notifications. `subscribe(fn)` returns an unsubscribe function. Subscribers should render rather than start nested updates.
 
 Every persistent write in `main.js` uses a transaction: default recipes, food logs and totals, meal groups, diary edits/deletes, scanned foods, custom food/recipe edits, pinning and deletion. Recipe-builder and tuner edits stay in detached modal drafts until committed. Import validates and commits through the store; export reads a snapshot. The existing backup JSON format and storage key are preserved. Imports use `file.text()` and accept an optional AbortSignal.
 

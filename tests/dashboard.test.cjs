@@ -11,6 +11,7 @@ test('cached dashboard updates values and views without replacing nodes', async 
         // CDN availability is independent of local dashboard behavior.
         await page.route('https://**/*', route => route.abort());
         await page.goto(baseURL);
+        await page.waitForSelector('#btn-toggle-view', { state: 'attached' });
         const result = await page.evaluate(async () => {
             const { createDashboard } = await import('/dashboard.js');
             const root = document.createElement('div');
@@ -23,7 +24,7 @@ test('cached dashboard updates values and views without replacing nodes', async 
             const initial = {
                 total: root.querySelector('[data-value="total-cal"]').textContent,
                 ring: Number(root.querySelector('[data-ring="p"]').style.strokeDashoffset),
-                width: root.querySelector('[data-bar="p"]').style.width,
+                transform: root.querySelector('[data-bar="p"]').style.transform,
                 remaining: root.querySelector('[data-value="difference"]').textContent
             };
             const observer = new MutationObserver(() => {});
@@ -40,7 +41,7 @@ test('cached dashboard updates values and views without replacing nodes', async 
                 label: root.querySelector('[data-value="difference-label"]').textContent,
                 difference: root.querySelector('[data-value="difference"]').textContent,
                 overColor: root.querySelector('[data-value="difference"]').parentElement.classList.contains('text-rose-400'),
-                widths: [...root.querySelectorAll('[data-bar]')].map(n => n.style.width),
+                transforms: [...root.querySelectorAll('[data-bar]')].map(n => n.style.transform),
                 offsets: [...root.querySelectorAll('[data-ring]')].map(n => Number(n.style.strokeDashoffset)),
                 visible: [...root.querySelectorAll('[data-view]')].filter(n => !n.hidden).map(n => n.dataset.view)
             };
@@ -50,7 +51,7 @@ test('cached dashboard updates values and views without replacing nodes', async 
         });
         assert.equal(result.initial.total, '500');
         assert.ok(Math.abs(result.initial.ring - Math.PI * 42) < 0.001);
-        assert.equal(result.initial.width, '50%');
+        assert.equal(result.initial.transform, 'scaleX(0.5)');
         assert.equal(result.initial.remaining, '1500');
         assert.equal(result.unchangedMutations, 0);
         assert.equal(result.sameNodes, true);
@@ -58,7 +59,7 @@ test('cached dashboard updates values and views without replacing nodes', async 
         assert.equal(result.edge.label, 'Over');
         assert.equal(result.edge.difference, '200');
         assert.equal(result.edge.overColor, true);
-        assert.deepEqual(result.edge.widths, ['100%', '0%', '0%']);
+        assert.deepEqual(result.edge.transforms, ['scaleX(1)', 'scaleX(0)', 'scaleX(0)']);
         assert.equal(result.edge.offsets[0], 0);
         assert.deepEqual(result.edge.visible, ['bars']);
         assert.equal(result.finite, true);
@@ -73,6 +74,7 @@ test('food logging, editing, deleting and view toggles update the cached app das
         page.on('pageerror', error => errors.push(error.message));
         await page.route('https://**/*', route => route.abort());
         await page.goto(baseURL);
+        await page.waitForSelector('#btn-toggle-view', { state: 'attached' });
         await page.evaluate(() => {
             window.testNodes = [...document.querySelectorAll('#macro-dashboard *')];
             document.querySelector('#btn-toggle-view').focus();

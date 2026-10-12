@@ -25,9 +25,9 @@ export function createDashboard(root) {
                         <circle cx="50" cy="50" r="32" fill="transparent" stroke="#1e293b" stroke-width="7"></circle>
                         <circle cx="50" cy="50" r="22" fill="transparent" stroke="#1e293b" stroke-width="7"></circle>
                         
-                        <circle cx="50" cy="50" r="42" fill="transparent" stroke="#3b82f6" stroke-width="7" stroke-linecap="round" data-ring="p" stroke-dasharray="263.89378290154264" stroke-dashoffset="263.89378290154264" class="transition-all duration-1000 ease-out" style="filter: drop-shadow(0 0 4px rgba(59,130,246,0.5));"></circle>
-                        <circle cx="50" cy="50" r="32" fill="transparent" stroke="#10b981" stroke-width="7" stroke-linecap="round" data-ring="c" stroke-dasharray="201.06192982974676" stroke-dashoffset="201.06192982974676" class="transition-all duration-1000 ease-out" style="filter: drop-shadow(0 0 4px rgba(16,185,129,0.5));"></circle>
-                        <circle cx="50" cy="50" r="22" fill="transparent" stroke="#f43f5e" stroke-width="7" stroke-linecap="round" data-ring="f" stroke-dasharray="138.23007675795088" stroke-dashoffset="138.23007675795088" class="transition-all duration-1000 ease-out" style="filter: drop-shadow(0 0 4px rgba(244,63,94,0.5));"></circle>
+                        <circle cx="50" cy="50" r="42" fill="transparent" stroke="#3b82f6" stroke-width="7" stroke-linecap="round" data-ring="p" stroke-dasharray="263.89378290154264" stroke-dashoffset="263.89378290154264" class="dashboard-ring" style="filter: drop-shadow(0 0 4px rgba(59,130,246,0.5));"></circle>
+                        <circle cx="50" cy="50" r="32" fill="transparent" stroke="#10b981" stroke-width="7" stroke-linecap="round" data-ring="c" stroke-dasharray="201.06192982974676" stroke-dashoffset="201.06192982974676" class="dashboard-ring" style="filter: drop-shadow(0 0 4px rgba(16,185,129,0.5));"></circle>
+                        <circle cx="50" cy="50" r="22" fill="transparent" stroke="#f43f5e" stroke-width="7" stroke-linecap="round" data-ring="f" stroke-dasharray="138.23007675795088" stroke-dashoffset="138.23007675795088" class="dashboard-ring" style="filter: drop-shadow(0 0 4px rgba(244,63,94,0.5));"></circle>
                     </svg>
                 </div>
                 <div class="flex justify-center gap-6 w-full border-t border-slate-800/50 pt-5 mt-6">
@@ -49,15 +49,15 @@ export function createDashboard(root) {
             <div class="space-y-4">
                 <div>
                     <div class="flex justify-between text-xs font-bold mb-1"><span class="text-blue-400">Protein</span><span class="text-slate-300 tabular-nums"><span data-value="total-p">0</span>g / <span data-value="target-p">0</span>g</span></div>
-                    <div class="w-full bg-slate-800 rounded-full h-2 overflow-hidden"><div class="bg-blue-500 h-2 rounded-full transition-all duration-500 ease-out" data-bar="p" style="width: 0%"></div></div>
+                    <div class="w-full bg-slate-800 rounded-full h-2 overflow-hidden"><div class="bg-blue-500 h-2 rounded-full origin-left transition-transform duration-300 ease-out" data-bar="p" style="width: 100%; transform: scaleX(0)"></div></div>
                 </div>
                 <div>
                     <div class="flex justify-between text-xs font-bold mb-1"><span class="text-emerald-400">Carbs</span><span class="text-slate-300 tabular-nums"><span data-value="total-c">0</span>g / <span data-value="target-c">0</span>g</span></div>
-                    <div class="w-full bg-slate-800 rounded-full h-2 overflow-hidden"><div class="bg-emerald-500 h-2 rounded-full transition-all duration-500 ease-out" data-bar="c" style="width: 0%"></div></div>
+                    <div class="w-full bg-slate-800 rounded-full h-2 overflow-hidden"><div class="bg-emerald-500 h-2 rounded-full origin-left transition-transform duration-300 ease-out" data-bar="c" style="width: 100%; transform: scaleX(0)"></div></div>
                 </div>
                 <div>
                     <div class="flex justify-between text-xs font-bold mb-1"><span class="text-rose-400">Fat</span><span class="text-slate-300 tabular-nums"><span data-value="total-f">0</span>g / <span data-value="target-f">0</span>g</span></div>
-                    <div class="w-full bg-slate-800 rounded-full h-2 overflow-hidden"><div class="bg-rose-500 h-2 rounded-full transition-all duration-500 ease-out" data-bar="f" style="width: 0%"></div></div>
+                    <div class="w-full bg-slate-800 rounded-full h-2 overflow-hidden"><div class="bg-rose-500 h-2 rounded-full origin-left transition-transform duration-300 ease-out" data-bar="f" style="width: 100%; transform: scaleX(0)"></div></div>
                 </div>
             </div>
         </div><div data-view="minimal" hidden>
@@ -130,8 +130,8 @@ export function createDashboard(root) {
             }
             for (const node of bars) {
                 const key = node.dataset.bar;
-                const width = `${progress(number(totals[key]), number(targets[key])) * 100}%`;
-                if (node.style.width !== width) node.style.width = width;
+                const transform = `scaleX(${progress(number(totals[key]), number(targets[key]))})`;
+                if (node.style.transform !== transform) node.style.transform = transform;
             }
             if (view !== currentView) {
                 for (const node of views) node.hidden = node.dataset.view !== view;

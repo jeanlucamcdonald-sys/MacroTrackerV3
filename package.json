@@ -1,0 +1,22 @@
+{
+  "name": "macrotracker-v3",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "esbuild firebase-adapter.js --bundle --format=esm --outfile=dist/firebase-adapter.js --external:./cloud-model.js --minify && node scripts/copy-cloud-model.cjs && esbuild scanner-library.js --bundle --format=esm --outfile=dist/scanner.js --minify && tailwindcss -i tailwind-input.css -o dist/tailwind.css --minify && node scripts/build-version.cjs",
+    "test:browser": "node --test tests/dashboard.test.cjs tests/phase-1.test.cjs tests/app-improvements.test.cjs",
+    "test:rules": "firebase emulators:exec --project demo-macrotracker --only firestore 'node --test tests/firestore-rules.test.cjs'",
+    "test:cloud": "firebase emulators:exec --project demo-macrotracker --only auth,firestore \"MACROTRACKER_EMULATORS=1 node --test tests/cloud-browser.test.cjs\""
+  },
+  "dependencies": {
+    "firebase": "11.10.0",
+    "html5-qrcode": "2.3.8"
+  },
+  "devDependencies": {
+    "@firebase/rules-unit-testing": "4.0.1",
+    "esbuild": "0.25.5",
+    "firebase-tools": "14.7.0",
+    "playwright": "1.56.1",
+    "tailwindcss": "3.4.17"
+  }
+}

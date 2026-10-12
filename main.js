@@ -1,6 +1,10 @@
 import { store } from './state.js';
 import { createRouter } from './router.js';
+import { initializeAccount } from './account.js';
 import { createDashboard } from './dashboard.js';
+import { UNITS, unitOptions, servingFactor, ingredientFactor, convertAmount } from './units.js';
+import { localDateString, watchLocalDay } from './local-date.js';
+import { createSelectSystem } from './select-widget.js';
 import { searchExternalDatabase } from './usda.js';
 
 const lifetime = new AbortController();
@@ -34,7 +38,25 @@ function finishClose(element, callback) {
     closingTimers.set(element, schedule(() => {
         closingTimers.delete(element);
         callback();
-    }, 300));
+    }, matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 190));
+}
+
+const openingFrames = new Map();
+function cancelOpen(root) {
+    for (const frame of openingFrames.get(root) || []) cancelAnimationFrame(frame);
+    openingFrames.delete(root);
+}
+function reveal(root, callback) {
+    cancelOpen(root);
+    const frames = [];
+    openingFrames.set(root, frames);
+    frames.push(requestAnimationFrame(() => {
+        frames.push(requestAnimationFrame(() => {
+            if (openingFrames.get(root) !== frames || lifetime.signal.aborted) return;
+            openingFrames.delete(root);
+            callback();
+        }));
+    }));
 }
 
 function wait(delay, signal) {
@@ -53,13 +75,8 @@ function escapeAttribute(value) {
 }
 
 // 1. Reliable Local Date Helper
-function getLocalDateString() {
-    const d = new Date();
-    const year = d.getFullYear();
-    const month = String(d.getMonth() + 1).padStart(2, '0');
-    const day = String(d.getDate()).padStart(2, '0');
-    return `${year}-${month}-${day}`;
-}
+const selects = createSelectSystem(bindClick, { signal: lifetime.signal });
+const getLocalDateString = localDateString;
 
 // 2. Initialize App State & Recipes
 
@@ -109,13 +126,13 @@ const btnConfirmLog = document.getElementById('btn-confirm-log');
 
 const btnModalUnitTrigger = document.getElementById('btn-modal-unit-trigger');
 const modalUnitTriggerLabel = document.getElementById('modal-unit-trigger-label');
-const modalUnitDropdown = document.getElementById('modal-unit-dropdown');
-const modalUnitDropdownList = document.getElementById('modal-unit-dropdown-list');
 const modalUnitScaleValue = document.getElementById('modal-unit-scale-value');
 const modalUnitLabelValue = document.getElementById('modal-unit-label-value');
 
 let activeFoodToLog = null;
 let activeDiaryEntryId = null;
+let activeDiaryDate = null;
+let activeRecipeDate = null;
 let currentDashboardView = 'rings';
 const dashboard = createDashboard(document.getElementById('macro-dashboard'));
 let currentDbFilterTab = 'all';
@@ -132,53 +149,46 @@ function openModal(food, existingEntryId = null) {
     cancelClose(modal);
     activeFoodToLog = food;
     activeDiaryEntryId = existingEntryId;
+    activeDiaryDate = getLocalDateString();
     modalName.textContent = food.name;
     const baseUnit = food.unit || 'g';
     modalBase.textContent = `${food.serving}${baseUnit}`;
 
     modalInput.value = 1;
-    modalUnitDropdown.classList.add('hidden');
 
-    const unitOptions = [
-        { label: `1 serving (${food.serving}${baseUnit})`, scale: 1, unitText: `serving (${food.serving}${baseUnit})` },
-        { label: `1 ${baseUnit}`, scale: 1 / food.serving, unitText: baseUnit }
-    ];
-
-    if (baseUnit === 'g') {
-        unitOptions.push({ label: `1 oz (28.35g)`, scale: 28.35 / food.serving, unitText: 'oz' });
-        unitOptions.push({ label: `1 lb (453.6g)`, scale: 453.6 / food.serving, unitText: 'lb' });
-        unitOptions.push({ label: `100g standard`, scale: 100 / food.serving, unitText: '100g' });
-    } else if (baseUnit === 'oz') {
-        unitOptions.push({ label: `1 g`, scale: (1 / 28.35) / food.serving, unitText: 'g' });
-        unitOptions.push({ label: `1 lb (16 oz)`, scale: 16 / food.serving, unitText: 'lb' });
-    } else if (baseUnit === 'ml') {
-        unitOptions.push({ label: `1 cup (240ml)`, scale: 240 / food.serving, unitText: 'cup' });
-        unitOptions.push({ label: `1 tbsp (15ml)`, scale: 15 / food.serving, unitText: 'tbsp' });
-        unitOptions.push({ label: `1 tsp (5ml)`, scale: 5 / food.serving, unitText: 'tsp' });
-        unitOptions.push({ label: `1 fl oz (29.57ml)`, scale: 29.57 / food.serving, unitText: 'fl oz' });
+    const options = unitOptions(food);
+    let selectedUnit = 'portion';
+    function selectUnit(value) {
+        selectedUnit = value;
+        modalUnitScaleValue.value = servingFactor(food, 1, value);
+        modalUnitLabelValue.value = value;
+        modalUnitTriggerLabel.textContent = options.find(option => option.value === value).label;
+        updateModalMacros();
     }
-
-    modalUnitDropdownList.innerHTML = unitOptions.map(opt => `
-        <button type="button" data-scale="${opt.scale}" data-label="${opt.label}" data-unit="${opt.unitText}" class="modal-unit-opt w-full text-left px-4 py-2.5 text-xs text-slate-200 hover:bg-slate-700/60 transition border-b border-slate-700/40 last:border-0 font-medium">
-            ${opt.label}
-        </button>
-    `).join('');
-
-    modalUnitScaleValue.value = unitOptions[0].scale;
-    modalUnitLabelValue.value = unitOptions[0].unitText;
-    modalUnitTriggerLabel.textContent = unitOptions[0].label;
+    selects.register(btnModalUnitTrigger, {
+        options, getValue: () => selectedUnit, onChange: selectUnit, label: 'Food logging unit'
+    });
+    selectUnit('portion');
+    const existing = store.get().logs[getLocalDateString().slice(0, 7)]?.[getLocalDateString()]?.diary.find(entry => entry.id === existingEntryId);
+    if (existing) {
+        const key = existing.unitKey || (existing.unit.startsWith('serving') ? 'portion' : existing.unit);
+        if (options.some(option => option.value === key)) selectUnit(key);
+        modalInput.value = existing.amount;
+    }
 
     btnConfirmLog.textContent = existingEntryId ? 'Save Changes' : 'Log to Diary';
     updateModalMacros();
 
     modal.classList.remove('hidden');
-    requestAnimationFrame(() => {
+    reveal(modal, () => {
         modal.classList.remove('opacity-0', 'pointer-events-none');
         modalContent.classList.remove('translate-y-full');
     });
 }
 
 function closeModal() {
+    cancelOpen(modal);
+    selects.close();
     modal.classList.add('opacity-0', 'pointer-events-none');
     modalContent.classList.add('translate-y-full');
     activeFoodToLog = null;
@@ -186,27 +196,9 @@ function closeModal() {
     finishClose(modal, () => modal.classList.add('hidden'));
 }
 
-if (btnModalUnitTrigger) {
-    bindClick(btnModalUnitTrigger, (e) => {
-        e.stopPropagation();
-        modalUnitDropdown.classList.toggle('hidden');
-    });
-}
-
-if (modalUnitDropdownList) {
-    bindClick(modalUnitDropdownList, (e) => {
-        const btn = e.target.closest('.modal-unit-opt');
-        if (!btn) return;
-        modalUnitScaleValue.value = btn.getAttribute('data-scale');
-        modalUnitLabelValue.value = btn.getAttribute('data-unit');
-        modalUnitTriggerLabel.textContent = btn.getAttribute('data-label');
-        modalUnitDropdown.classList.add('hidden');
-        updateModalMacros();
-    });
-}
-
 function updateModalMacros() {
     if (!activeFoodToLog) return;
+    if (activeDiaryEntryId && activeDiaryDate !== getLocalDateString()) { closeModal(); renderDailyBrief(); return; }
     const servings = parseFloat(modalInput.value) || 0;
     const unitScale = parseFloat(modalUnitScaleValue.value) || 0;
     const totalScale = servings * unitScale;
@@ -219,10 +211,12 @@ function updateModalMacros() {
 
 function logFoodToState() {
     if (!activeFoodToLog) return;
+    if (activeDiaryEntryId && activeDiaryDate !== getLocalDateString()) { closeModal(); renderDailyBrief(); return; }
     const servings = parseFloat(modalInput.value) || 0;
     const unitScale = parseFloat(modalUnitScaleValue.value) || 0;
     const totalScale = servings * unitScale;
-    const selectedUnitText = modalUnitLabelValue.value;
+    const selectedUnitKey = modalUnitLabelValue.value;
+    const selectedUnitText = selectedUnitKey === 'portion' ? 'serving' : selectedUnitKey;
 
     const today = getLocalDateString();
     const monthKey = today.substring(0, 7);
@@ -246,6 +240,8 @@ function logFoodToState() {
 
                 old.amount = servings;
                 old.unit = selectedUnitText;
+                old.unitKey = selectedUnitKey;
+                old.nutrition = structuredClone(activeFoodToLog);
                 old.cal = Math.round(activeFoodToLog.cal * totalScale);
                 old.p = Math.round(activeFoodToLog.p * totalScale);
                 old.c = Math.round(activeFoodToLog.c * totalScale);
@@ -264,6 +260,8 @@ function logFoodToState() {
                 name: activeFoodToLog.name,
                 amount: servings,
                 unit: selectedUnitText,
+                unitKey: selectedUnitKey,
+                nutrition: structuredClone(activeFoodToLog),
                 cal: Math.round(activeFoodToLog.cal * totalScale),
                 p: Math.round(activeFoodToLog.p * totalScale),
                 c: Math.round(activeFoodToLog.c * totalScale),
@@ -554,17 +552,17 @@ function editDiaryEntry(entryId) {
                 id: it.id || it.foodId || Math.random(),
                 name: it.name,
                 amount: it.amount,
-                unit: it.unit,
+                unit: it.unit === 'portion' ? 'serving' : it.unit,
                 cal: it.cal,
                 p: it.p,
                 c: it.c,
                 f: it.f,
                 baseServing: it.amount,
-                baseUnit: it.unit
+                baseUnit: it.unit === 'portion' ? 'serving' : it.unit
             }))
         }, entry.id);
     } else {
-        const food = store.get().foodDatabase.find(f => String(f.id) === String(entry.foodId)) || {
+        const food = entry.nutrition || store.get().foodDatabase.find(f => String(f.id) === String(entry.foodId)) || {
             id: entry.foodId,
             name: entry.name,
             serving: 1,
@@ -623,8 +621,10 @@ function startScanner() {
         try {
             await clearScanner();
             await wait(350, session.signal);
-            const formats = globalThis.Html5QrcodeSupportedFormats;
-            html5QrCode = new Html5Qrcode('reader', formats ? { formatsToSupport: [formats.UPC_A, formats.UPC_E, formats.EAN_13, formats.EAN_8] } : undefined);
+            const library = globalThis.Html5Qrcode ? globalThis : await import('./dist/scanner.js');
+            session.signal.throwIfAborted();
+            const formats = library.Html5QrcodeSupportedFormats;
+            html5QrCode = new library.Html5Qrcode('reader', formats ? { formatsToSupport: [formats.UPC_A, formats.UPC_E, formats.EAN_13, formats.EAN_8] } : undefined);
             await html5QrCode.start(
                 { facingMode: 'environment' },
                 { fps: 15, qrbox: { width: 250, height: 150 } },
@@ -734,6 +734,7 @@ function openDrawer() {
 }
 
 function closeDrawer() {
+    selects.close();
     drawerBackdrop.classList.add('opacity-0', 'pointer-events-none');
     drawerPanel.classList.remove('translate-x-0');
     drawerPanel.classList.add('translate-x-full');
@@ -810,7 +811,6 @@ function openCustomFoodModal(itemToEdit = null, isRecipe = false) {
     customFoodForm.reset();
     document.getElementById('custom-type-tabs').classList.remove('hidden');
 
-    if (customUnitDropdown) customUnitDropdown.classList.add('hidden');
     if (recipeFoodDropdown) recipeFoodDropdown.classList.add('hidden');
 
     if (itemToEdit && isRecipe) {
@@ -853,12 +853,14 @@ function openCustomFoodModal(itemToEdit = null, isRecipe = false) {
     }
 
     customFoodModal.classList.remove('hidden');
-    requestAnimationFrame(() => {
+    reveal(customFoodModal, () => {
         customFoodModal.classList.remove('opacity-0', 'pointer-events-none');
     });
 }
 
 function closeCustomFoodModal() {
+    cancelOpen(customFoodModal);
+    selects.close();
     customFoodModal.classList.add('opacity-0', 'pointer-events-none');
     finishClose(customFoodModal, () => customFoodModal.classList.add('hidden'));
 }
@@ -898,24 +900,16 @@ listen(customFoodForm, 'submit', (e) => {
 
 // Custom Dropdowns Engine for Food Units
 const btnUnitTrigger = document.getElementById('btn-custom-unit-trigger');
-const customUnitDropdown = document.getElementById('custom-unit-dropdown');
 const customFoodUnitHidden = document.getElementById('custom-food-unit');
 const selectedUnitLabel = document.getElementById('selected-unit-label');
 
-if (btnUnitTrigger) {
-    bindClick(btnUnitTrigger, (e) => {
-        e.stopPropagation();
-        customUnitDropdown.classList.toggle('hidden');
-    });
-
-    bindClick(customUnitDropdown, (e) => {
-        const opt = e.target.closest('.unit-opt');
-        if (!opt) return;
-        customFoodUnitHidden.value = opt.getAttribute('data-val');
-        selectedUnitLabel.textContent = opt.getAttribute('data-label');
-        customUnitDropdown.classList.add('hidden');
-    });
-}
+selects.register(btnUnitTrigger, {
+    options: UNITS, getValue: () => customFoodUnitHidden.value,
+    onChange: value => {
+        customFoodUnitHidden.value = value;
+        selectedUnitLabel.textContent = UNITS.find(unit => unit.value === value).label;
+    }, label: 'Database serving unit'
+});
 
 // Recipe Builder Dropdown
 const btnRecipeFoodTrigger = document.getElementById('btn-recipe-food-trigger');
@@ -961,9 +955,7 @@ if (btnRecipeFoodTrigger) {
 
 function dismissDropdowns(e) {
     if (e.cancelBubble) return;
-    if (customUnitDropdown) customUnitDropdown.classList.add('hidden');
     if (recipeFoodDropdown) recipeFoodDropdown.classList.add('hidden');
-    if (modalUnitDropdown) modalUnitDropdown.classList.add('hidden');
     const tunerDrop = document.getElementById('tuner-food-dropdown');
     if (tunerDrop) tunerDrop.classList.add('hidden');
 }
@@ -992,10 +984,31 @@ if (btnAddIngToRecipe) {
     });
 }
 
+function registerIngredientUnits(root, ingredients, attribute, refresh) {
+    for (const button of root.querySelectorAll(`[${attribute}]`)) {
+        const item = ingredients[Number(button.getAttribute(attribute))];
+        selects.register(button, {
+            options: unitOptions(item),
+            getValue: () => item.activeUnit || item.unit || item.baseUnit || 'g',
+            onChange: value => {
+                const previous = item.activeUnit || item.unit || item.baseUnit || 'g';
+                item.amount = convertAmount(item, item.amount, previous === 'serving' && item.baseUnit !== 'serving' ? 'portion' : previous, value);
+                item.unit = value;
+                item.activeUnit = value;
+                button.textContent = value === 'portion' ? 'serving' : value;
+                button.closest('.flex')?.querySelector('input')?.setAttribute('value', item.amount);
+                const input = button.parentElement.querySelector('input');
+                if (input) input.value = Number(item.amount.toFixed(4));
+                refresh();
+            }, label: 'Meal ingredient unit'
+        });
+    }
+}
+
 function calculateBuilderTotals() {
     let tCal = 0, tP = 0, tC = 0, tF = 0;
     recipeBuilderIngredients.forEach(item => {
-        const ratio = (item.amount || 0) / (item.baseServing || 100);
+        const ratio = ingredientFactor(item);
         tCal += item.cal * ratio;
         tP += item.p * ratio;
         tC += item.c * ratio;
@@ -1022,12 +1035,13 @@ function renderRecipeBuilderList() {
             <span class="font-bold text-slate-200 truncate flex-1">${item.name}</span>
             <div class="flex items-center gap-2">
                 <input type="number" step="any" value="${item.amount}" data-builder-idx="${idx}" class="builder-ing-input w-16 bg-slate-900 border border-slate-700 rounded-lg py-1 text-center font-bold text-white focus:outline-none">
-                <span class="text-slate-400 w-5">${item.unit}</span>
+                <button type="button" class="builder-unit select-trigger" data-builder-unit="${idx}">${escapeAttribute(item.unit === 'portion' ? 'serving' : item.unit)}</button>
                 <button type="button" data-action="remove-builder-ingredient" data-id="${idx}" class="text-slate-500 hover:text-rose-400 p-1">✕</button>
             </div>
         </div>
     `).join('');
 
+    registerIngredientUnits(list, recipeBuilderIngredients, 'data-builder-unit', calculateBuilderTotals);
     calculateBuilderTotals();
 }
 
@@ -1121,7 +1135,7 @@ function renderDatabaseView(filterQuery = '') {
         if (item.type === 'recipe') {
             let rCal = 0, rP = 0, rC = 0, rF = 0;
             (item.ingredients || []).forEach(ing => {
-                const ratio = (ing.amount || 0) / (ing.baseServing || 100);
+                const ratio = ingredientFactor(ing);
                 rCal += ing.cal * ratio;
                 rP += ing.p * ratio;
                 rC += ing.c * ratio;
@@ -1248,6 +1262,7 @@ function openRecipeModal(recipe, existingLogEntryId = null) {
     cancelClose(recipeModal);
     activeRecipe = JSON.parse(JSON.stringify(recipe));
     activeRecipeLogEntryId = existingLogEntryId;
+    activeRecipeDate = getLocalDateString();
     recipeModalName.textContent = activeRecipe.name;
     btnConfirmRecipe.textContent = existingLogEntryId ? 'Update Meal Log' : 'Log Meal Group';
     if (tunerFoodDropdown) tunerFoodDropdown.classList.add('hidden');
@@ -1255,13 +1270,15 @@ function openRecipeModal(recipe, existingLogEntryId = null) {
     renderRecipeIngredients();
 
     recipeModal.classList.remove('hidden');
-    requestAnimationFrame(() => {
+    reveal(recipeModal, () => {
         recipeModal.classList.remove('opacity-0', 'pointer-events-none');
         if (recipeModalContent) recipeModalContent.classList.remove('translate-y-full');
     });
 }
 
 function closeRecipeModal() {
+    cancelOpen(recipeModal);
+    selects.close();
     recipeModal.classList.add('opacity-0', 'pointer-events-none');
     if (recipeModalContent) recipeModalContent.classList.add('translate-y-full');
     activeRecipe = null;
@@ -1275,17 +1292,7 @@ function updateRecipeTotals() {
 
     activeRecipe.ingredients.forEach(item => {
         const unit = item.activeUnit || item.baseUnit || item.unit || 'g';
-        let ratio = 1;
-
-        if (unit === 'g') {
-            ratio = (item.amount || 0) / (item.baseServing || 100);
-        } else if (unit === 'oz') {
-            ratio = ((item.amount || 0) * 28.35) / (item.baseServing || 100);
-        } else if (unit === 'serving') {
-            ratio = (item.amount || 0);
-        } else {
-            ratio = (item.amount || 0) / (item.baseServing || 1);
-        }
+        const ratio = ingredientFactor(item);
 
         tCal += item.cal * ratio;
         tP += item.p * ratio;
@@ -1300,29 +1307,7 @@ function updateRecipeTotals() {
 function renderRecipeIngredients() {
     recipeIngredientsList.innerHTML = activeRecipe.ingredients.map((item, idx) => {
         const baseUnit = item.baseUnit || item.unit || 'g';
-        const isGram = baseUnit === 'g';
-        const isOz = baseUnit === 'oz';
-        const currentUnit = item.activeUnit || baseUnit;
-
-        let unitOptions = `<option value="${baseUnit}" selected>${baseUnit}</option>`;
-        if (isGram) {
-            unitOptions = `
-                <option value="g" ${currentUnit === 'g' ? 'selected' : ''}>g</option>
-                <option value="oz" ${currentUnit === 'oz' ? 'selected' : ''}>oz</option>
-                <option value="serving" ${currentUnit === 'serving' ? 'selected' : ''}>serv</option>
-            `;
-        } else if (isOz) {
-            unitOptions = `
-                <option value="oz" ${currentUnit === 'oz' ? 'selected' : ''}>oz</option>
-                <option value="g" ${currentUnit === 'g' ? 'selected' : ''}>g</option>
-                <option value="serving" ${currentUnit === 'serving' ? 'selected' : ''}>serv</option>
-            `;
-        } else {
-            unitOptions = `
-                <option value="${baseUnit}" selected>${baseUnit}</option>
-                <option value="serving" ${currentUnit === 'serving' ? 'selected' : ''}>serv</option>
-            `;
-        }
+        const currentUnit = item.activeUnit || item.unit || baseUnit;
 
         return `
             <div class="bg-slate-950/80 p-3 rounded-2xl border border-white/[0.05] flex items-center justify-between gap-3">
@@ -1333,14 +1318,7 @@ function renderRecipeIngredients() {
                 <div class="flex items-center gap-2">
                     <input type="number" step="any" value="${item.amount}" data-tuner-idx="${idx}" class="recipe-tuner-input w-20 bg-slate-900 border border-slate-700 rounded-xl py-1.5 text-center text-sm font-bold text-white tabular-nums focus:outline-none focus:border-blue-500">
 
-                    <div class="relative">
-                        <select data-ingredient-idx="${idx}" class="recipe-ing-unit bg-slate-900 border border-slate-700 text-xs text-slate-300 font-semibold rounded-xl py-1.5 pl-2 pr-6 appearance-none focus:outline-none focus:border-blue-500 cursor-pointer">
-                            ${unitOptions}
-                        </select>
-                        <div class="absolute right-2 top-2 pointer-events-none text-slate-500">
-                            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
-                        </div>
-                    </div>
+                    <button type="button" data-ingredient-idx="${idx}" class="recipe-ing-unit select-trigger">${escapeAttribute(currentUnit === 'portion' ? 'serving' : currentUnit)}</button>
 
                     <button type="button" data-action="remove-tuner-ingredient" data-id="${idx}" class="p-1 text-slate-500 hover:text-rose-400 transition" title="Remove from this meal">
                         ✕
@@ -1350,6 +1328,7 @@ function renderRecipeIngredients() {
         `;
     }).join('');
 
+    registerIngredientUnits(recipeIngredientsList, activeRecipe.ingredients, 'data-ingredient-idx', updateRecipeTotals);
     updateRecipeTotals();
 }
 
@@ -1365,29 +1344,6 @@ if (recipeIngredientsList) {
         }
     });
 
-    listen(recipeIngredientsList, 'change', (e) => {
-        const select = e.target.closest('.recipe-ing-unit');
-        if (!select || !activeRecipe) return;
-        const idx = parseInt(select.getAttribute('data-ingredient-idx'), 10);
-        const item = activeRecipe.ingredients[idx];
-        if (!item) return;
-
-        const prevUnit = item.activeUnit || item.baseUnit || item.unit || 'g';
-        const newUnit = select.value;
-        item.activeUnit = newUnit;
-
-        if (prevUnit === 'g' && newUnit === 'oz') {
-            item.amount = Math.round((item.amount / 28.35) * 10) / 10;
-        } else if (prevUnit === 'oz' && newUnit === 'g') {
-            item.amount = Math.round(item.amount * 28.35);
-        } else if (newUnit === 'serving') {
-            item.amount = 1;
-        } else if (prevUnit === 'serving' && newUnit === 'g') {
-            item.amount = item.baseServing || 100;
-        }
-
-        renderRecipeIngredients();
-    });
 }
 
 function removeTunerIngredient(idx) {
@@ -1447,6 +1403,7 @@ if (recipeBackdrop) bindClick(recipeBackdrop, closeRecipeModal);
 if (btnConfirmRecipe) {
     bindClick(btnConfirmRecipe, () => {
         if (!activeRecipe) return;
+        if (activeRecipeLogEntryId && activeRecipeDate !== getLocalDateString()) { closeRecipeModal(); renderDailyBrief(); return; }
         const today = getLocalDateString();
         const monthKey = today.substring(0, 7);
         const timeNow = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
@@ -1464,17 +1421,7 @@ if (btnConfirmRecipe) {
             activeRecipe.ingredients.forEach(item => {
                 if (item.amount <= 0) return;
                 const unit = item.activeUnit || item.baseUnit || item.unit || 'g';
-                let ratio = 1;
-
-                if (unit === 'g') {
-                    ratio = item.amount / (item.baseServing || 100);
-                } else if (unit === 'oz') {
-                    ratio = (item.amount * 28.35) / (item.baseServing || 100);
-                } else if (unit === 'serving') {
-                    ratio = item.amount;
-                } else {
-                    ratio = item.amount / (item.baseServing || 1);
-                }
+                const ratio = ingredientFactor(item);
 
                 const cal = Math.round(item.cal * ratio);
                 const p = Math.round(item.p * ratio);
@@ -1490,7 +1437,7 @@ if (btnConfirmRecipe) {
                     id: item.id,
                     name: item.name,
                     amount: item.amount,
-                    unit: unit,
+                    unit: unit === 'portion' ? 'serving' : unit,
                     cal, p, c, f
                 });
             });
@@ -1550,11 +1497,31 @@ const router = createRouter({
         .map(action => [action, ({ event }) => databaseAction(event)]))
 }, { afterDispatch: event => { dismissSearch(event); dismissDropdowns(event); } });
 
-const unsubscribe = store.subscribe(() => {
-    renderPredictivePills();
-    renderDailyBrief();
-    renderDatabaseView(dbFilterInput?.value || '');
+let lastRenderedState = store.get();
+const unsubscribe = store.subscribe(state => {
+    const recipesChanged = JSON.stringify(state.recipes) !== JSON.stringify(lastRenderedState.recipes);
+    const foodsChanged = JSON.stringify(state.foodDatabase) !== JSON.stringify(lastRenderedState.foodDatabase);
+    const day = getLocalDateString();
+    const previousDay = lastRenderedState.logs[day.slice(0, 7)]?.[day];
+    const nextDay = state.logs[day.slice(0, 7)]?.[day];
+    if (recipesChanged) renderPredictivePills();
+    if (JSON.stringify(previousDay) !== JSON.stringify(nextDay) || JSON.stringify(state.targets) !== JSON.stringify(lastRenderedState.targets)) renderDailyBrief();
+    if ((recipesChanged || foodsChanged) && !document.getElementById('view-database').classList.contains('hidden')) renderDatabaseView(dbFilterInput?.value || '');
+    lastRenderedState = state;
 });
+
+const stopDayWatcher = watchLocalDay(() => {
+    // An edit opened yesterday must never silently target today's diary.
+    if (activeDiaryEntryId) closeModal();
+    if (activeRecipeLogEntryId) closeRecipeModal();
+    renderDailyBrief();
+});
+
+listen(globalThis, 'account-changing', () => {
+    cancelSearch(); selects.close(); closeModal(); closeRecipeModal(); closeCustomFoodModal();
+    void stopScanner().catch(error => console.error(error));
+});
+void initializeAccount(bindClick, lifetime.signal, selects);
 
 // 14. Initial App Boot
 renderPredictivePills();
@@ -1563,10 +1530,18 @@ listen(globalThis, 'pagehide', event => {
     cancelSearch();
     void stopScanner().catch(error => console.error('Scanner teardown failed:', error));
     if (!event.persisted) {
+        stopDayWatcher();
+        selects.close();
         unsubscribe();
         router.destroy();
         lifetime.abort();
         for (const timer of timers) clearTimeout(timer);
         timers.clear();
+        for (const root of openingFrames.keys()) cancelOpen(root);
     }
 });
+
+if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('./service-worker.js', { updateViaCache: 'none' })
+        .catch(error => console.error('Offline app shell unavailable:', error));
+}

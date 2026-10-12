@@ -1,12 +1,14 @@
 import { createStore } from './store.js';
+import { deviceCache } from './persistence.js';
 
 // state.js
 
 export const STORAGE_KEY = 'macroTrackerPro_State_v2';
 
 // 1. Define safe structural defaults
-const DEFAULT_STATE = {
-    version: "2.0",
+export const DEFAULT_STATE = {
+    version: "3.0",
+    profile: { displayName: '', weightUnit: 'kg', heightCm: null },
     settings: {
         onboardingComplete: false,
         goalWeight: 0,
@@ -49,7 +51,7 @@ export function validateState(state) {
     }
     return true;
 }
-function normalizeState(parsed) {
+export function normalizeState(parsed) {
     if (!isRecord(parsed) || !isRecord(parsed.targets) || !isRecord(parsed.logs)) throw new TypeError('Invalid backup file structure');
     const state = {
         ...structuredClone(DEFAULT_STATE), ...parsed,
@@ -60,19 +62,34 @@ function normalizeState(parsed) {
     return state;
 }
 export function saveLocalState(state) {
-    // Throw on failure so the store does not publish a state that wasn't saved.
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    deviceCache.save(state);
 }
-function loadLocalState() {
+async function loadDeviceState() {
     try {
+        const cached = await deviceCache.read('guest');
+        if (cached) return normalizeState(cached.state);
+        // One-time migration; do not delete the legacy backup until the IDB commit succeeds.
         const raw = localStorage.getItem(STORAGE_KEY);
-        return raw ? normalizeState(JSON.parse(raw)) : structuredClone(DEFAULT_STATE);
+        const state = raw ? normalizeState(JSON.parse(raw)) : structuredClone(DEFAULT_STATE);
+        deviceCache.save(state);
+        await deviceCache.flush();
+        if (raw) localStorage.removeItem(STORAGE_KEY);
+        return state;
     } catch (error) {
-        console.error('Could not restore local state; using defaults:', error);
-        return structuredClone(DEFAULT_STATE);
+        console.error('Device cache unavailable:', error);
+        let state = structuredClone(DEFAULT_STATE);
+        try { const raw = localStorage.getItem(STORAGE_KEY); if (raw) state = normalizeState(JSON.parse(raw)); } catch {}
+        return state;
     }
 }
-export const store = createStore(loadLocalState(), { saveLocalState, validate: validateState });
+export const store = createStore(await loadDeviceState(), { saveLocalState, validate: validateState });
+export function replaceState(state) {
+    const normalized = normalizeState(state);
+    store.update(draft => {
+        for (const key of Object.keys(draft)) delete draft[key];
+        Object.assign(draft, normalized);
+    });
+}
 
 export function exportUserData() {
     const data = 'data:text/json;charset=utf-8,' + encodeURIComponent(JSON.stringify(store.get(), null, 2));

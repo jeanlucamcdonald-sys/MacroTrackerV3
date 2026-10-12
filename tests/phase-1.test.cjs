@@ -11,6 +11,7 @@ async function withPage(run, setup) {
         const errors = [];
         page.on('pageerror', e => errors.push(e.message));
         await page.goto(baseURL);
+        await page.waitForSelector('#btn-toggle-view', { state: 'attached' });
         await run(page);
         assert.deepEqual(errors, []);
     } finally { await browser.close(); }
@@ -48,7 +49,7 @@ test('store isolates drafts, validates, rolls back persistence failures and publ
             try { await importUserData({ target: { files: [new File([JSON.stringify(before)], 'backup.json')] } }, { signal: controller.signal }); }
             catch { cancelled = true; }
             return { count: testStore.get().count, writes, notifications, errors, rejected, quota: quota.get().count,
-                published, invalidRejected, cancelled, saved: JSON.parse(localStorage.getItem(STORAGE_KEY)).targets.cal, current: store.get().targets.cal };
+                published, invalidRejected, cancelled, saved: (await (await import('/persistence.js')).deviceCache.read('guest')).state.targets.cal, current: store.get().targets.cal };
         });
         assert.deepEqual(results, { count: 1, writes: 1, notifications: 1, errors: 1, rejected: 3, quota: 0,
             published: '2300', invalidRejected: true, cancelled: true, saved: 2300, current: 2300 });

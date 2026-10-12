@@ -1,6 +1,6 @@
 # Phase 2: cached dashboard
 
-`dashboard.js` mounts the existing header and rings, bars, and minimal views once. It caches all numeric text nodes, progress circles, bars, and view wrappers. `update(totals, targets, view)` only writes changed text/styles and toggles view visibility. It does not query the DOM again, measure layout, or replace the dashboard subtree. The toggle button retains its identity and keyboard focus.
+`dashboard.js` mounts the existing header and rings, bars, and minimal views once. It caches all numeric text nodes, progress circles, transform-scaled bars, and view wrappers. `update(totals, targets, view)` only writes changed text/styles and toggles view visibility. It does not query the DOM again, measure layout, or replace the dashboard subtree. The toggle button retains its identity and keyboard focus.
 
 `main.js` initializes the dashboard beside the view state and calls `dashboard.update()` from `renderDailyBrief()`. Existing logging, editing, deletion, visibility refreshes, and view toggles use that path. Diary rendering remains separate and unchanged. Phase 1 is now integrated: store subscriptions refresh this dashboard, and the centralized router handles view toggles. Phase 3 is not included.
 
@@ -19,4 +19,4 @@ npm install --prefix /tmp/macrotracker-validation --cache /tmp/npm-cache playwri
 NODE_PATH=/tmp/macrotracker-validation/node_modules node --test tests/dashboard.test.cjs
 ```
 
-Optional overrides: `MACROTRACKER_TEST_URL` for the server URL and `CHROMIUM_PATH` for the browser executable. Tests use isolated browser contexts and block external CDN/API requests, so they validate local dashboard behavior rather than external services. They cover exact totals and ring/bar progress, zero/exceeded targets, view visibility, node identity, focus, zero DOM mutations on unchanged refresh, and real food logging/editing/deleting through the app.
+Optional overrides: `MACROTRACKER_TEST_URL` for the server URL and `CHROMIUM_PATH` for the browser executable. Tests use isolated browser contexts and block external CDN/API requests, so they validate local dashboard behavior rather than external services. They cover exact totals and ring/bar transform progress, zero/exceeded targets, view visibility, node identity, focus, zero DOM mutations on unchanged refresh, and real food logging/editing/deleting through the app.

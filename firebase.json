@@ -1,0 +1,5 @@
+{
+  "firestore": { "rules": "firestore.rules" },
+  "hosting": { "public": ".", "ignore": ["firebase.json", "firebase-debug.log", "firestore.rules", "node_modules/**", ".git/**", ".firebase/**", "tests/**", "docs/**", "scripts/**", "package*.json", "firebase-adapter.js"] },
+  "emulators": { "auth": { "port": 9099 }, "firestore": { "port": 8080 }, "ui": { "enabled": false } }
+}

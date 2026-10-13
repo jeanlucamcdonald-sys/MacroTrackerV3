@@ -1,6 +1,6 @@
 import { store } from './state.js';
 import { localDateString } from './local-date.js';
-import { parseDate, weightIn, weightSummary, setLatestWeight } from './history-model.js';
+import { parseDate, weightIn, weightSummary, setLatestWeight, movingAverageWeights } from './history-model.js';
 const fmt = value => Number(value.toFixed(2)).toLocaleString();
 const delta = value => value === null ? 'Need an earlier reading' : `${value > 0 ? '+' : ''}${fmt(value)}`;
 export function initializeWeights(bindClick, signal, selection = () => ({ anchor: localDateString(), period: 'day' })) {
@@ -52,8 +52,9 @@ export function initializeWeights(bindClick, signal, selection = () => ({ anchor
             const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
             svg.setAttribute('viewBox', '0 0 320 100'); svg.setAttribute('role', 'img');
             svg.setAttribute('aria-label', `30-day weight trend in ${unit}, ${summary.points.length} readings`);
+            const averages = movingAverageWeights(state.weightLog, unit).filter(entry => summary.points.some(point => point.timestamp === entry.timestamp));
             const values = summary.points.map(entry => weightIn(entry, unit));
-            const min = Math.min(...values), range = Math.max(...values) - min || 1;
+            const min = Math.min(...values, ...averages.map(entry => entry.value)), range = Math.max(...values, ...averages.map(entry => entry.value)) - min || 1;
             const time = entry => Date.parse(localDateString(new Date(entry.timestamp)) + 'T12:00:00Z');
             const first = time(summary.points[0]), duration = time(summary.points.at(-1)) - first || 1;
             const coords = summary.points.map((entry, i) => [10 + (time(entry) - first) / duration * 300, 85 - (values[i] - min) / range * 65]);
@@ -63,7 +64,11 @@ export function initializeWeights(bindClick, signal, selection = () => ({ anchor
                 const circle = document.createElementNS(svg.namespaceURI, 'circle'); circle.setAttribute('cx', x); circle.setAttribute('cy', y); circle.setAttribute('r', '4'); circle.setAttribute('fill', '#60a5fa');
                 const title = document.createElementNS(svg.namespaceURI, 'title'); title.textContent = `${localDateString(new Date(summary.points[i].timestamp))}: ${fmt(values[i])} ${unit}`; circle.append(title); svg.append(circle);
             });
+            const average = document.createElementNS(svg.namespaceURI, 'polyline');
+            average.dataset.trend = 'moving-average'; average.setAttribute('points', averages.map(entry => `${10 + (time(entry) - first) / duration * 300},${85 - (entry.value - min) / range * 65}`).join(' '));
+            average.setAttribute('fill', 'none'); average.setAttribute('stroke', '#a5b4fc'); average.setAttribute('stroke-width', '2'); average.setAttribute('stroke-dasharray', '4 3'); svg.append(average);
             chart.append(svg);
+            const legend = document.createElement('p'); legend.className = 'muted'; legend.textContent = 'Blue: recorded weight · Dashed: 7-day average of available readings'; chart.append(legend);
         } else { chart.textContent = 'Log a weight to start your trend.'; }
         history.replaceChildren();
         if (!state.weightLog.length) { const li = document.createElement('li'); li.textContent = 'No weight history yet. Start in onboarding or log your first reading.'; history.append(li); }

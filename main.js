@@ -5,6 +5,7 @@ import { localDateString, watchLocalDay } from './local-date.js';
 import { createSelectSystem } from './select-widget.js';
 import { loadCatalog, allFoods, findFood, searchFoods } from './product-catalog.js';
 import { searchProducts } from './product-search.js';
+import { statusDotMarkup } from './compliance.js';
 import { emptyMacros, summarizePeriod } from './history-model.js';
 
 document.documentElement.dataset.accountPhase = 'loading';
@@ -470,9 +471,10 @@ function renderDailyBrief() {
     weights.render();
     const logContainer = document.getElementById('daily-log-container');
     if (period === 'day') {
-        logContainer.innerHTML = diaryMarkup(state.logs[anchor.slice(0, 7)]?.[anchor] || { totals: emptyMacros(), diary: [] }, anchor);
+        const day = summary.days[0];
+        logContainer.innerHTML = `<h3 class="timeline-date">${statusDotMarkup(day.adherence)} ${anchor} · ${Number(day.totals.cal.toFixed(1))} / ${Number(state.targets.cal.toFixed(1))} kcal · ${day.totals.p}g P / ${day.totals.c}g C / ${day.totals.f}g F · ${day.adherence.label}</h3>` + diaryMarkup(state.logs[anchor.slice(0, 7)]?.[anchor] || { totals: emptyMacros(), diary: [] }, anchor);
     } else {
-        logContainer.innerHTML = summary.days.filter(day => day.logged).map(day => `<section data-log-date="${day.date}"><h3 class="timeline-date">${day.date} · ${Number(day.totals.cal.toFixed(1))} kcal · ${day.totals.p}g P / ${day.totals.c}g C / ${day.totals.f}g F</h3>${diaryMarkup(day.log, day.date)}</section>`).join('') || '<p class="account-card muted">No food entries in this period. Missing days are not counted as zero intake.</p>';
+        logContainer.innerHTML = summary.days.filter(day => day.logged).map(day => `<section data-log-date="${day.date}"><h3 class="timeline-date">${statusDotMarkup(day.adherence)} ${day.date} · ${Number(day.totals.cal.toFixed(1))} / ${Number(state.targets.cal.toFixed(1))} kcal · ${day.totals.p}g P / ${day.totals.c}g C / ${day.totals.f}g F · ${day.adherence.label}</h3>${diaryMarkup(day.log, day.date)}</section>`).join('') || '<p class="account-card muted">No food entries in this period. Missing days are not counted as zero intake.</p>';
     }
 }
 function diaryMarkup(dayLog, date) {
@@ -823,6 +825,7 @@ function switchView(targetViewId) {
 
     document.querySelectorAll('.drawer-nav-item').forEach(btn => {
         const isActive = btn.getAttribute('data-nav') === targetViewId;
+        if (isActive) btn.setAttribute('aria-current', 'page'); else btn.removeAttribute('aria-current');
         btn.className = isActive
             ? 'drawer-nav-item w-full flex items-center gap-3 px-4 py-3 rounded-2xl text-sm font-semibold text-white bg-slate-800/70 hover:bg-slate-800 transition'
             : 'drawer-nav-item w-full flex items-center gap-3 px-4 py-3 rounded-2xl text-sm font-semibold text-slate-300 hover:text-white hover:bg-slate-800/50 transition';
@@ -1597,7 +1600,7 @@ const unsubscribe = store.subscribe(state => {
     const recipesChanged = JSON.stringify(state.recipes) !== JSON.stringify(lastRenderedState.recipes);
     const foodsChanged = JSON.stringify(state.foodDatabase) !== JSON.stringify(lastRenderedState.foodDatabase);
     if (recipesChanged) renderPredictivePills();
-    if (JSON.stringify(state.logs) !== JSON.stringify(lastRenderedState.logs) || JSON.stringify(state.targets) !== JSON.stringify(lastRenderedState.targets)) renderDailyBrief();
+    if (JSON.stringify(state.logs) !== JSON.stringify(lastRenderedState.logs) || JSON.stringify(state.targets) !== JSON.stringify(lastRenderedState.targets) || state.profile?.goal !== lastRenderedState.profile?.goal) renderDailyBrief();
     if ((recipesChanged || foodsChanged) && !document.getElementById('view-database').classList.contains('hidden')) renderDatabaseView(dbFilterInput?.value || '');
     lastRenderedState = state;
 });

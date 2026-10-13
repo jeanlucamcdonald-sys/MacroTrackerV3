@@ -10,10 +10,10 @@ export const PROMPTS = {
 };
 export function dashboardContext(profile = {}, user = null, date = new Date()) {
     const named = value => typeof value === 'string' ? value.trim() : '';
-    const supplied = named(profile.displayName) || named(profile.name) || named(user?.displayName) || named(user?.email).split('@')[0] || 'there';
+    const supplied = named(profile.displayName) || named(profile.name) || named(user?.displayName) || 'there';
     const name = supplied;
     const hour = date.getHours();
-    const phase = hour < 4 ? 'late' : hour < 12 ? 'morning' : hour < 18 ? 'afternoon' : 'evening';
+    const phase = hour < 4 ? 'late' : hour < 12 ? 'morning' : hour < 17 ? 'afternoon' : 'evening';
     const goal = ({ cut: 'lose', bulk: 'gain' })[profile.goal] || (['lose', 'gain'].includes(profile.goal) ? profile.goal : 'maintain');
     const salutation = phase === 'morning' ? 'Good morning' : phase === 'afternoon' ? 'Good afternoon' : 'Good evening';
     // Stable for a local half-hour window; refreshes across dates, goals, and accounts.

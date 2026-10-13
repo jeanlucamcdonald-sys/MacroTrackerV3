@@ -21,13 +21,14 @@ export function createDashboard(root) {
             <div class="flex flex-col items-center justify-center pt-2 pb-2">
                 <div class="relative w-48 h-48 ring-wrapper">
                     <svg viewBox="0 0 100 100" class="w-full h-full transform -rotate-90 macro-rings">
+                        <defs><filter id="ring-glow" x="-50%" y="-50%" width="200%" height="200%" color-interpolation-filters="sRGB"><feGaussianBlur stdDeviation="2" result="blur"/><feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs>
                         <circle cx="50" cy="50" r="42" fill="transparent" stroke="#1e293b" stroke-width="7"></circle>
                         <circle cx="50" cy="50" r="32" fill="transparent" stroke="#1e293b" stroke-width="7"></circle>
                         <circle cx="50" cy="50" r="22" fill="transparent" stroke="#1e293b" stroke-width="7"></circle>
                         
-                        <circle cx="50" cy="50" r="42" fill="transparent" stroke="#3b82f6" stroke-width="7" stroke-linecap="round" data-ring="p" stroke-dasharray="263.89378290154264" stroke-dashoffset="263.89378290154264" class="dashboard-ring" style="filter: drop-shadow(0 0 4px rgba(59,130,246,0.5));"></circle>
-                        <circle cx="50" cy="50" r="32" fill="transparent" stroke="#10b981" stroke-width="7" stroke-linecap="round" data-ring="c" stroke-dasharray="201.06192982974676" stroke-dashoffset="201.06192982974676" class="dashboard-ring" style="filter: drop-shadow(0 0 4px rgba(16,185,129,0.5));"></circle>
-                        <circle cx="50" cy="50" r="22" fill="transparent" stroke="#f43f5e" stroke-width="7" stroke-linecap="round" data-ring="f" stroke-dasharray="138.23007675795088" stroke-dashoffset="138.23007675795088" class="dashboard-ring" style="filter: drop-shadow(0 0 4px rgba(244,63,94,0.5));"></circle>
+                        <circle cx="50" cy="50" r="42" fill="transparent" stroke="#3b82f6" stroke-width="7" stroke-linecap="round" data-ring="p" stroke-dasharray="263.89378290154264" stroke-dashoffset="263.89378290154264" class="dashboard-ring" filter="url(#ring-glow)"></circle>
+                        <circle cx="50" cy="50" r="32" fill="transparent" stroke="#10b981" stroke-width="7" stroke-linecap="round" data-ring="c" stroke-dasharray="201.06192982974676" stroke-dashoffset="201.06192982974676" class="dashboard-ring" filter="url(#ring-glow)"></circle>
+                        <circle cx="50" cy="50" r="22" fill="transparent" stroke="#f43f5e" stroke-width="7" stroke-linecap="round" data-ring="f" stroke-dasharray="138.23007675795088" stroke-dashoffset="138.23007675795088" class="dashboard-ring" filter="url(#ring-glow)"></circle>
                     </svg>
                 </div>
                 <div class="flex justify-center gap-6 w-full border-t border-slate-800/50 pt-5 mt-6">

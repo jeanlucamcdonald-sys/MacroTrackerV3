@@ -147,3 +147,46 @@ test('backup merge preserves local conflicts, recomputes diary totals and cancel
         assert.equal(await page.evaluate(async () => JSON.stringify((await import('/state.js')).store.get())), before);
     });
 });
+
+test('every drawer destination responds to real hover/click and closes without pointer trapping', async () => {
+    await withPage(async page => {
+        for (const [selector, view] of [['#nav-weight-log', '#view-weight'], ['#nav-account-profile', '#view-settings'], ['#nav-settings', '#view-settings'], ['#btn-account', '#view-settings']]) {
+            await page.locator('#btn-menu').click();
+            await page.locator(selector).hover();
+            assert.equal(await page.locator(selector).evaluate(el => getComputedStyle(el).cursor), 'pointer');
+            await page.locator(selector).click();
+            assert.equal(await page.locator(view).isVisible(), true);
+            assert.equal(await page.locator('#drawer-panel').evaluate(el => el.inert), true);
+            assert.equal(await page.locator('#btn-menu').getAttribute('aria-expanded'), 'false');
+        }
+        await page.locator('#btn-settings-back').click();
+        await page.locator('#btn-menu').click(); await page.locator('#drawer-backdrop').click({ position: { x: 5, y: 5 } });
+        await page.locator('#btn-menu').click(); await page.keyboard.press('Escape');
+    });
+});
+test('calendar, timeline and summary share protein-based compliance and update on goal changes', async () => {
+    await withPage(async page => {
+        await page.evaluate(async () => {
+            const { store } = await import('/state.js');
+            store.update(state => {
+                state.profile.goal = 'cut'; state.targets = { cal: 2000, p: 150, c: 200, f: 600 / 9 };
+                for (const [date, cal, p] of [['2026-10-05', 2100, 150], ['2026-10-06', 2250, 120], ['2026-10-07', 2175, 150], ['2026-10-08', 1800, 150]]) {
+                    const totals = { cal, p, c: 100, f: 40 };
+                    state.logs['2026-10'] ||= {}; state.logs['2026-10'][date] = { date, totals, diary: [{ id: date, name: 'Test meal', timestamp: '12:00', ...totals }] };
+                }
+            });
+        });
+        await page.locator('#period-date').fill('2026-10-06'); await page.locator('#period-date').dispatchEvent('change'); await click(page, '[data-period=week]');
+        assert.match(await page.locator('#period-summary').textContent(), /25% of logged days met/);
+        for (const [date, tone] of [['05', 'green'], ['06', 'yellow'], ['07', 'red'], ['08', 'blue']]) assert.equal(await page.locator(`[data-log-date="2026-10-${date}"] .timeline-date .status-dot.${tone}`).count(), 1);
+        await click(page, '[data-log-format=calendar]'); assert.equal(await page.locator('.calendar-day').count(), 7);
+        for (const [date, tone] of [['05', 'green'], ['06', 'yellow'], ['07', 'red'], ['08', 'blue']]) {
+            const dot = page.locator(`.calendar-day[data-date="2026-10-${date}"] > .status-dot.${tone}`);
+            assert.equal(await dot.count(), 1); const rect = await dot.boundingBox(); assert.equal(rect.width, 8); assert.equal(rect.height, 8);
+        }
+        await page.evaluate(async () => (await import('/state.js')).store.update(state => { state.profile.goal = 'maintain'; }));
+        assert.equal(await page.locator('.calendar-day[data-date="2026-10-07"] > .status-dot.yellow').count(), 1);
+        await click(page, '.calendar-day[data-date="2026-10-07"]'); assert.equal(await page.locator('#daily-log-container .timeline-date .status-dot.yellow').count(), 1);
+        assert.match(await page.locator('#daily-log-container').textContent(), /2175 \/ 2000 kcal/);
+    });
+});

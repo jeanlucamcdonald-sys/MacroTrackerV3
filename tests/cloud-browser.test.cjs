@@ -177,14 +177,14 @@ test('cloud diary without a profile document is restored rather than overwritten
     } finally { await environment.cleanup(); await browser.close(); }
 });
 
-test('auth restoration uses displayName, canonical profile name, legacy profile name and email fallback', { skip: !process.env.MACROTRACKER_EMULATORS }, async () => {
+test('auth restoration uses displayName, canonical profile name, legacy profile name and unnamed fallback', { skip: !process.env.MACROTRACKER_EMULATORS }, async () => {
     const browser = await chromium.launch({ executablePath: '/usr/bin/chromium', headless: true, args: ['--no-sandbox'] });
     const email = `greeting-${Date.now()}@example.test`;
     try {
         const { page, context } = await pageFor(browser);
         const errors = []; page.on('pageerror', error => errors.push(error.message));
         await signIn(page, email, true);
-        assert.ok((await page.locator('#dashboard-greeting').textContent()).endsWith(`, ${email.split('@')[0]}`));
+        assert.ok((await page.locator('#dashboard-greeting').textContent()).endsWith(', there'));
         await page.evaluate(async () => {
             const { store } = await import('/state.js');
             store.update(state => { state.profile.name = 'Canonical Person'; });

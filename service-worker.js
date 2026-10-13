@@ -4,7 +4,7 @@ const CACHE = `macrotracker-shell-${self.MACROTRACKER_BUILD}`;
 const SHELL = [
     './', './manifest.webmanifest', './icon.svg', './index.html', './main.js', './state.js', './store.js', './router.js', './dashboard.js',
     './usda.js', './units.js', './select-widget.js', './local-date.js', './styles.css',
-    './history-model.js', './history-ui.js', './weight-ui.js', './backup-ui.js', './nutrition-engine.js', './onboarding.js', './dialogs.js', './dashboard-context.js', './product-catalog.js', './product-search.js', './data/foods.json', './data/catalog-source.json',
+    './compliance.js', './history-model.js', './history-ui.js', './weight-ui.js', './backup-ui.js', './nutrition-engine.js', './onboarding.js', './dialogs.js', './dashboard-context.js', './product-catalog.js', './product-search.js', './data/foods.json', './data/catalog-source.json',
     './persistence.js', './account.js', './cloud-sync.js', './cloud-model.js', './firebase-config.js',
     './dist/firebase-adapter.js', './dist/scanner.js', './dist/tailwind.css'
 ];

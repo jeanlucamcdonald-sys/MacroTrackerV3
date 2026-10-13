@@ -1,4 +1,5 @@
 import { localDateString } from './local-date.js';
+import { evaluateDayCompliance, COMPLIANCE } from './compliance.js';
 export const MACROS = ['cal', 'p', 'c', 'f'];
 export const emptyMacros = () => ({ cal: 0, p: 0, c: 0, f: 0 });
 export function parseDate(value) {
@@ -33,14 +34,14 @@ export function summarizePeriod(state, anchor, period) {
         const log = state.logs[date.slice(0, 7)]?.[date];
         const logged = !!log?.diary?.length;
         const totals = log?.totals || emptyMacros();
-        const ratio = state.targets.cal > 0 ? totals.cal / state.targets.cal : null;
-        return { date, log, logged, totals, onTarget: logged && ratio !== null && Math.abs(ratio - 1) <= .10000001 };
+        const adherence = logged ? evaluateDayCompliance(totals, state.targets, state.profile?.goal || 'maintain') : { ...COMPLIANCE.missing };
+        return { date, log, logged, totals, adherence, onTarget: adherence.status === 'met' };
     });
     const logged = days.filter(day => day.logged);
     const totals = emptyMacros();
     logged.forEach(day => MACROS.forEach(key => totals[key] += day.totals[key]));
     const averages = Object.fromEntries(MACROS.map(key => [key, logged.length ? totals[key] / logged.length : 0]));
-    return { days, totals, averages, loggedDays: logged.length, compliance: logged.length && state.targets.cal > 0 ? logged.filter(day => day.onTarget).length / logged.length * 100 : null, balance: totals.cal - state.targets.cal * logged.length };
+    return { days, totals, averages, loggedDays: logged.length, compliance: logged.length ? logged.filter(day => day.onTarget).length / logged.length * 100 : null, balance: totals.cal - state.targets.cal * logged.length };
 }
 export function weightIn(entry, unit) {
     return entry.value * (entry.unit === unit ? 1 : unit === 'kg' ? .45359237 : 1 / .45359237);
@@ -54,6 +55,16 @@ export function weightSummary(entries, unit, anchor, period = 'month') {
     const points = sorted.filter(entry => localDateString(new Date(entry.timestamp)) >= addDays(anchor, -29));
     const delta = entry => latest && entry ? weightIn(latest, unit) - weightIn(entry, unit) : null;
     return { latest, value: latest ? weightIn(latest, unit) : null, weeklyChange: delta(baseline), startingChange: delta(sorted[0]), periodChange: delta(periodBaseline), points };
+}
+/** Trailing seven-calendar-day mean of available readings, including today's point. */
+export function movingAverageWeights(entries, unit) {
+    const sorted = [...entries].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+    return sorted.map(entry => {
+        const date = localDateString(new Date(entry.timestamp));
+        const start = addDays(date, -6);
+        const window = sorted.filter(row => row.timestamp <= entry.timestamp && localDateString(new Date(row.timestamp)) >= start);
+        return { timestamp: entry.timestamp, value: window.reduce((sum, row) => sum + weightIn(row, unit), 0) / window.length, unit };
+    });
 }
 export function setLatestWeight(state) {
     const latest = [...state.weightLog].sort((a, b) => a.timestamp.localeCompare(b.timestamp)).at(-1);

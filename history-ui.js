@@ -1,3 +1,4 @@
+import { createStatusDot, evaluateDayCompliance, COMPLIANCE, complianceGoal } from './compliance.js';
 import { localDateString } from './local-date.js';
 import { MACROS, emptyMacros, parseDate, movePeriod, summarizePeriod, periodDates } from './history-model.js';
 const labels = { cal: 'Calories', p: 'Protein', c: 'Carbs', f: 'Fat' };
@@ -28,7 +29,7 @@ export function initializeHistory(bindClick, signal, onChange) {
             const tbody = document.createElement('tbody');
             MACROS.forEach(key => { const row = document.createElement('tr'); [labels[key], `${fmt(summary.totals[key])}${key === 'cal' ? ' kcal' : 'g'}`, `${fmt(summary.averages[key])}${key === 'cal' ? ' kcal' : 'g'}`].forEach(value => { const cell = document.createElement('td'); cell.textContent = value; row.append(cell); }); tbody.append(row); });
             table.append(tbody); const note = document.createElement('p'); note.className = 'muted';
-            note.textContent = `${summary.compliance === null ? 'No target compliance data' : `${fmt(summary.compliance)}% of logged days within ±10% of current calorie target`}. Calorie balance on logged days: ${summary.balance > 0 ? '+' : ''}${fmt(summary.balance)} kcal. Days without entries are missing data.`;
+            note.textContent = `${summary.compliance === null ? 'No target compliance data' : `${fmt(summary.compliance)}% of logged days met calorie and protein goals (${complianceGoal(state.profile?.goal)} plan)`}. Calorie balance on logged days: ${summary.balance > 0 ? '+' : ''}${fmt(summary.balance)} kcal. Days without entries are missing data.`;
             overview.append(title, table, note);
         }
         const trend = document.getElementById('macro-trends'); trend.hidden = period === 'day'; trend.replaceChildren();
@@ -36,7 +37,7 @@ export function initializeHistory(bindClick, signal, onChange) {
             const title = document.createElement('h3'); title.textContent = 'Daily macros vs. current targets'; trend.append(title);
             for (const day of summary.days) {
                 const row = document.createElement('div'); row.className = 'macro-trend-row'; row.dataset.date = day.date;
-                const date = document.createElement('span'); date.textContent = day.date.slice(5); row.append(date);
+                const date = document.createElement('span'); date.textContent = day.date.slice(5); date.prepend(createStatusDot(day.adherence)); row.append(date);
                 if (!day.logged) { const missing = document.createElement('span'); missing.className = 'muted'; missing.textContent = 'No entries'; row.append(missing); }
                 else MACROS.forEach(key => {
                     const block = document.createElement('div'); block.className = `trend-macro trend-${key}`;
@@ -50,28 +51,30 @@ export function initializeHistory(bindClick, signal, onChange) {
         document.getElementById('daily-log-container').hidden = format === 'calendar';
         if (format === 'calendar') {
             const heading = document.createElement('h3'); heading.textContent = parseDate(anchor).toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
-            const note = document.createElement('p'); note.className = 'muted'; note.textContent = 'On target: within ±10% of your current calorie target. Select a date to open its log.';
+            const note = document.createElement('p'); note.className = 'muted'; note.textContent = `Current ${complianceGoal(state.profile?.goal)} plan: green means within 150 kcal and no more than 10g short of protein. Yellow: discrepancy; red: exceeded or critical miss; blue: under calories. Gray: no entries. Select a date to open its log.`;
             const grid = document.createElement('div'); grid.className = 'calendar-grid';
             ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].forEach(name => { const label = document.createElement('span'); label.textContent = name; grid.append(label); });
-            const monthDates = periodDates(anchor, 'month');
+            const monthDates = periodDates(anchor, period === 'week' ? 'week' : 'month');
             const offset = (parseDate(monthDates[0]).getDay() + 6) % 7;
             for (let i = 0; i < offset; i++) grid.append(document.createElement('span'));
             for (const date of monthDates) {
                 const log = state.logs[date.slice(0, 7)]?.[date], logged = !!log?.diary?.length;
                 const button = document.createElement('button'); button.type = 'button'; button.className = 'calendar-day'; button.dataset.date = date;
                 const inPeriod = summary.days.some(day => day.date === date); button.classList.toggle('in-period', inPeriod);
-                const totals = log?.totals || emptyMacros(); const onTarget = logged && state.targets.cal > 0 && Math.abs(totals.cal / state.targets.cal - 1) <= .10000001;
-                button.dataset.status = !logged ? 'missing' : onTarget ? 'target' : 'variance';
+                const totals = log?.totals || emptyMacros();
+                const adherence = logged ? evaluateDayCompliance(totals, state.targets, state.profile?.goal || 'maintain') : COMPLIANCE.missing;
+                button.dataset.status = adherence.status;
                 const name = document.createElement('strong'); name.textContent = Number(date.slice(-2));
                 const calories = document.createElement('small'); calories.textContent = logged ? `${fmt(totals.cal)} kcal` : 'No entries';
-                const badge = document.createElement('small'); badge.textContent = logged ? onTarget ? 'On target' : totals.cal > state.targets.cal ? 'Above target' : 'Below target' : '';
+                const badge = document.createElement('small'); badge.textContent = logged ? adherence.label : '';
                 button.setAttribute('aria-label', `${date}: ${logged ? `${fmt(totals.cal)} calories, protein ${fmt(totals.p)}g, carbs ${fmt(totals.c)}g, fat ${fmt(totals.f)}g, ${badge.textContent}` : 'no entries'}`);
                 button.title = logged ? `${totals.p}g protein · ${totals.c}g carbs · ${totals.f}g fat` : 'No logged entries';
                 const macros = document.createElement('small'); macros.className = 'calendar-macros';
                 macros.textContent = logged ? `P ${fmt(totals.p)}g · C ${fmt(totals.c)}g · F ${fmt(totals.f)}g` : '';
-                button.append(name, calories, macros, badge);
+                button.append(name, createStatusDot(adherence), calories, macros, badge);
                 bindClick(button, () => { anchor = date; period = 'day'; format = 'timeline'; followToday = date === localDateString(); change(); }); grid.append(button);
             }
+            if (period === 'week') heading.textContent = `${monthDates[0]} — ${monthDates.at(-1)}`;
             calendar.append(heading, note, grid);
         }
         return summary;

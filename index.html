@@ -402,7 +402,7 @@
                     </button>
                 </div>
 
-                <nav class="mt-6 space-y-2">
+                <nav class="drawer-nav mt-6 space-y-2" aria-label="App sections">
                     <button data-nav="view-home" class="drawer-nav-item w-full flex items-center gap-3 px-4 py-3 rounded-2xl text-sm font-semibold text-white bg-slate-800/70 hover:bg-slate-800 transition">
                         <svg class="w-5 h-5 text-blue-400 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"></path></svg>
                         Daily Brief
@@ -414,10 +414,10 @@
                     </button>
 
 
-                    <button data-nav="view-weight" class="drawer-nav-item">Weight Log</button>
+                    <button id="nav-weight-log" type="button" data-nav="view-weight" class="drawer-nav-item">Weight Log</button>
                     <button id="btn-account" type="button" data-settings-target="account" class="drawer-nav-item">Account</button>
-                    <button type="button" data-settings-target="profile" class="drawer-nav-item">Profile</button>
-                    <button type="button" data-settings-target="settings" class="drawer-nav-item">Settings & data</button>
+                    <button id="nav-account-profile" type="button" data-settings-target="profile" class="drawer-nav-item">Profile</button>
+                    <button id="nav-settings" type="button" data-settings-target="settings" class="drawer-nav-item">Settings & data</button>
                 </nav>
             </div>
 

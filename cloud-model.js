@@ -20,7 +20,35 @@ export function stateDocuments(state) {
 }
 export function documentsState(documents) {
     const state = structuredClone(DEFAULT_STATE);
-    Object.assign(state, documents.get('profile/current') || {});
+    const saved = documents.get('profile/current');
+    if (saved) {
+        if (!saved || typeof saved !== 'object' || Array.isArray(saved)) throw new TypeError('Invalid profile document');
+        const profile = saved.profile;
+        if (profile !== undefined && (profile === null || typeof profile !== 'object' || Array.isArray(profile))) throw new TypeError('Invalid profile fields');
+        state.profile = { ...state.profile, ...(profile || {}) };
+        if (!profile) {
+            for (const key of ['displayName', 'name', 'email', 'goal', 'goalType', 'currentWeight', 'weightUnit', 'heightCm', 'age', 'activity']) if (saved[key] !== undefined) state.profile[key] = saved[key];
+        }
+        if (!state.profile.goal && state.profile.goalType) state.profile.goal = state.profile.goalType;
+        state.profile.goal = ({ cut: 'lose', bulk: 'gain' })[state.profile.goal] || state.profile.goal || 'maintain';
+        for (const key of ['currentWeight', 'heightCm', 'age']) {
+            if (state.profile[key] != null && state.profile[key] !== '') {
+                const value = Number(state.profile[key]);
+                state.profile[key] = Number.isFinite(value) && value > 0 ? value : null;
+            }
+        }
+        if (saved.settings !== undefined) {
+            if (!saved.settings || typeof saved.settings !== 'object' || Array.isArray(saved.settings)) throw new TypeError('Invalid settings fields');
+            state.settings = { ...state.settings, ...saved.settings };
+        }
+        if (saved.targets !== undefined) {
+            if (!saved.targets || typeof saved.targets !== 'object' || Array.isArray(saved.targets)) throw new TypeError('Invalid targets');
+            state.targets = { ...state.targets, ...saved.targets };
+        } else {
+            for (const [oldKey, key] of [['calorieGoal', 'cal'], ['proteinGoal', 'p'], ['carbGoal', 'c'], ['fatGoal', 'f']]) if (saved[oldKey] !== undefined) state.targets[key] = saved[oldKey];
+        }
+        state.version = String(saved.version || state.version);
+    }
     Object.assign(state, documents.get('catalog/current') || {});
     state.logs = {};
     state.weightLog = [];

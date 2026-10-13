@@ -1,6 +1,7 @@
 name: Deploy to Firebase Hosting on merge
 
 on:
+  workflow_dispatch:
   push:
     branches:
       - main
@@ -24,6 +25,26 @@ jobs:
       - name: Build hosting assets
         run: npm run build
 
+      - name: Deploy Firestore security rules
+        env:
+          FIREBASE_SERVICE_ACCOUNT: '${{ secrets.FIREBASE_SERVICE_ACCOUNT }}'
+          GOOGLE_APPLICATION_CREDENTIALS: '${{ runner.temp }}/firebase-deploy-credentials.json'
+        run: |
+          python3 - <<'PYTHON'
+          import json, os
+          credentials = os.environ.get('FIREBASE_SERVICE_ACCOUNT', '')
+          if not credentials:
+              raise SystemExit('Configure the FIREBASE_SERVICE_ACCOUNT repository secret before deploying.')
+          try:
+              json.loads(credentials)
+          except ValueError:
+              raise SystemExit('FIREBASE_SERVICE_ACCOUNT must contain valid service-account JSON.')
+          fd = os.open(os.environ['GOOGLE_APPLICATION_CREDENTIALS'], os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+          with os.fdopen(fd, 'w') as output:
+              output.write(credentials)
+          PYTHON
+          ./node_modules/.bin/firebase deploy --only firestore:rules --project cal-tracker-70796 --non-interactive
+
       - name: Deploy to Firebase Hosting
         uses: FirebaseExtended/action-hosting-deploy@v0
         with:
@@ -31,3 +52,7 @@ jobs:
           firebaseServiceAccount: '${{ secrets.FIREBASE_SERVICE_ACCOUNT }}'
           channelId: live
           projectId: cal-tracker-70796
+
+      - name: Remove temporary deployment credentials
+        if: always()
+        run: rm -f "${{ runner.temp }}/firebase-deploy-credentials.json"

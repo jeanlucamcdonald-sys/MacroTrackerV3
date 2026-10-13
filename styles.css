@@ -110,3 +110,10 @@ button:focus-visible, input:focus-visible { outline: 2px solid #60a5fa; outline-
 .status-dot.neutral { background: #64748b; }
 .calendar-day > .status-dot { display: block; margin: .35rem auto; }
 .macro-trend-row .status-dot { margin-right: .3rem; }
+
+#scanner-modal { z-index: 110; align-items: center; justify-content: center; padding: 1rem; background: #020617bb; }
+#scanner-modal > div { width: min(100%, 36rem); flex: none; background: #0f172a; }
+#scanner-modal > div:nth-child(2) { min-height: 15rem; max-height: 55dvh; }
+.native-scanner-video { width: 100%; max-height: 55dvh; object-fit: contain; }
+#scanner-modal > div:first-child { border-radius: 1rem 1rem 0 0; padding-top: 1rem; }
+#scanner-modal > div:last-child { border-radius: 0 0 1rem 1rem; padding: 1rem; }

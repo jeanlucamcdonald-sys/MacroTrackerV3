@@ -103,12 +103,25 @@ export function replaceState(state) {
 }
 
 export function backupDocument(state = store.get()) {
-    return { backupFormat: 'macrotracker', backupVersion: 1, exportedAt: new Date().toISOString(), state };
+    return { backupFormat: 'macrotracker', backupVersion: 1, version: '1.0', exportedAt: new Date().toISOString(), profile: state.profile, targets: state.targets, weights: state.weightLog, meals: Object.values(state.logs).flatMap(month => Object.values(month)), state };
 }
 export function parseBackup(text) {
     const parsed = JSON.parse(text);
     if (parsed?.backupFormat !== undefined && (parsed.backupFormat !== 'macrotracker' || parsed.backupVersion !== 1)) throw new TypeError('Unsupported backup format');
-    const state = normalizeState(parsed?.backupFormat !== undefined ? parsed.state : parsed);
+    let raw = parsed?.backupFormat !== undefined ? parsed.state : parsed;
+    if (parsed?.backupFormat === undefined && parsed?.version === '1.0' && parsed.weights !== undefined && parsed.meals !== undefined) {
+        if (!isRecord(parsed.profile) || !Array.isArray(parsed.weights) || !Array.isArray(parsed.meals)) throw new TypeError('Invalid portable backup structure');
+        const logs = {};
+        for (const day of parsed.meals) {
+            if (!isRecord(day) || !Array.isArray(day.diary)) throw new TypeError('Portable meal logs must contain date, totals, and diary entries');
+            parseDate(day.date); logs[day.date.slice(0, 7)] ||= {};
+            if (logs[day.date.slice(0, 7)][day.date]) throw new TypeError('Portable backup contains duplicate diary dates');
+            logs[day.date.slice(0, 7)][day.date] = day;
+        }
+        raw = { ...structuredClone(DEFAULT_STATE), profile: parsed.profile, targets: parsed.targets || parsed.profile.targets || DEFAULT_STATE.targets, settings: parsed.settings || DEFAULT_STATE.settings, foodDatabase: parsed.foodDatabase || DEFAULT_STATE.foodDatabase, recipes: parsed.recipes || [], logs,
+            weightLog: parsed.weights.map(entry => ({ id: entry.id || entry.timestamp, timestamp: entry.timestamp, value: entry.value ?? entry.weight, unit: entry.unit || parsed.profile.weightUnit || 'kg' })) };
+    }
+    const state = normalizeState(raw);
     // Stable IDs make merge behavior predictable; duplicate IDs on different dates are fine.
     const identified = rows => {
         const ids = new Set();

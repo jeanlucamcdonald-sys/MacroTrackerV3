@@ -1,3 +1,4 @@
+import { authDiagnostic } from './auth-diagnostics.js';
 import { store, replaceState, DEFAULT_STATE } from './state.js';
 import { deviceCache } from './persistence.js';
 import { stateDocuments, documentChanges, mergeOfflineState } from './cloud-model.js';
@@ -8,6 +9,14 @@ export function createCloudSync(adapter, report) {
     let timer;
     let disposed = false;
     let hydrating = false;
+    async function readAccount(uid) {
+        let deadline;
+        try {
+            return await Promise.race([adapter.read(uid), new Promise((_, reject) => {
+                deadline = setTimeout(() => reject(Object.assign(new Error('Account loading timed out. Retry when your connection is available.'), { code: 'deadline-exceeded' })), 15000);
+            })]);
+        } finally { clearTimeout(deadline); }
+    }
     function status(phase, extra = {}) { report({ phase, user: session?.user || null, ...extra }); }
     async function flush() {
         const current = session;
@@ -62,7 +71,7 @@ export function createCloudSync(adapter, report) {
             }
             const cached = await deviceCache.read(user.uid);
             let remote;
-            try { remote = await adapter.read(user.uid); }
+            try { remote = await readAccount(user.uid); }
             catch (error) {
                 // Data/permission failures are not offline mode or invalid login credentials.
                 if (!cached || !['unavailable', 'deadline-exceeded', 'auth/network-request-failed'].includes(error.code)) throw error;
@@ -85,7 +94,10 @@ export function createCloudSync(adapter, report) {
             if (conflict) status('conflict', { error: conflict });
             else status(remote.offline ? 'pending' : 'synced');
         } catch (error) {
-            if (request === generation && !disposed) report({ phase: 'load-error', user, error });
+            if (request === generation && !disposed) {
+                authDiagnostic('account-hydration-failed', { uid: user?.uid || null, code: error?.code || 'sync/unknown' }, 'warn');
+                report({ phase: 'load-error', user, error });
+            }
         } finally {
             if (request === generation && !disposed) {
                 hydrating = false;
@@ -98,7 +110,11 @@ export function createCloudSync(adapter, report) {
         if (session?.needsRefresh) await loadUser(session.user);
         else await flush();
     }
-    const stopAuth = adapter.onAuth(user => { void loadUser(user); });
+    const stopAuth = adapter.onAuth(user => { void loadUser(user); }, error => {
+        generation++; clearTimeout(timer); hydrating = false; session = null;
+        authDiagnostic('listener-error', { code: error?.code || 'auth/unknown' }, 'warn');
+        report({ phase: 'load-error', user: adapter.currentUser?.() || null, error });
+    });
     globalThis.addEventListener('online', retry);
     const retryTimer = setInterval(() => { if (session && !session.conflict) void retry(); }, 15_000);
     return {
@@ -109,7 +125,7 @@ export function createCloudSync(adapter, report) {
         },
         async reloadCloud() {
             if (!session) return;
-            const remote = await adapter.read(session.user.uid);
+            const remote = await readAccount(session.user.uid);
             if (!remote.state) throw new Error('No cloud copy is available');
             session.baseline = remote.state;
             session.revisions = remote.revisions;

@@ -3,8 +3,9 @@ import { createRouter } from './router.js';
 import { UNITS, unitOptions, servingFactor, ingredientFactor, convertAmount } from './units.js';
 import { localDateString, watchLocalDay } from './local-date.js';
 import { createSelectSystem } from './select-widget.js';
-import { loadCatalog, allFoods, findFood, searchFoods } from './product-catalog.js';
+import { loadCatalog, allFoods, findFood, searchFoods, normalizeBarcode } from './product-catalog.js';
 import { searchProducts } from './product-search.js';
+import { searchFoodByBarcode } from './nutrition-engine.js';
 import { statusDotMarkup } from './compliance.js';
 import { emptyMacros, summarizePeriod } from './history-model.js';
 
@@ -654,12 +655,14 @@ const scannerModal = document.getElementById('scanner-modal');
 const btnCloseScanner = document.getElementById('btn-close-scanner');
 const scannerStatus = document.getElementById('scanner-status');
 let html5QrCode = null;
+let nativeScanner = null;
 let isProcessingScan = false;
 let scannerSession = null;
 let scannerQueue = Promise.resolve();
 let barcodeRequest = null;
 
 async function clearScanner() {
+    nativeScanner?.stop(); nativeScanner = null;
     const scanner = html5QrCode;
     if (!scanner) return;
     if (scanner.isScanning) await scanner.stop();
@@ -673,12 +676,25 @@ function startScanner() {
     const session = new AbortController();
     scannerSession = session;
     scannerModal.classList.remove('hidden');
+    btnCloseScanner.focus({ preventScroll: true });
     scannerStatus.textContent = 'Requesting camera access...';
     isProcessingScan = false;
     scannerQueue = scannerQueue.catch(error => console.error('Scanner cleanup failed:', error)).then(async () => {
         try {
             await clearScanner();
             await wait(350, session.signal);
+            if ('BarcodeDetector' in globalThis) {
+                try {
+                    const { startNativeScanner } = await import('./native-scanner.js');
+                    nativeScanner = await startNativeScanner(document.getElementById('reader'), text => { if (!session.signal.aborted) void onScanSuccess(text); }, session.signal);
+                    if (session.signal.aborted) await clearScanner();
+                    else scannerStatus.textContent = 'Position barcode in the center frame.';
+                    return;
+                } catch (error) {
+                    session.signal.throwIfAborted();
+                    console.info('[Scanner] Native detection unavailable; using camera library.');
+                }
+            }
             const library = globalThis.Html5Qrcode ? globalThis : await import('./dist/scanner.js');
             session.signal.throwIfAborted();
             const formats = library.Html5QrcodeSupportedFormats;
@@ -703,12 +719,20 @@ function startScanner() {
 }
 if (btnScanBarcode) bindClick(btnScanBarcode, startScanner);
 if (btnCloseScanner) bindClick(btnCloseScanner, stopScanner);
+bindClick(scannerModal, event => { if (event.target === scannerModal) return stopScanner(); });
+listen(scannerModal, 'keydown', event => {
+    if (event.key === 'Escape') { event.preventDefault(); void stopScanner().catch(error => console.warn('Scanner cleanup failed:', error)); }
+    if (event.key === 'Tab') { event.preventDefault(); btnCloseScanner.focus(); }
+});
 function stopScanner() {
     scannerSession?.abort();
+    nativeScanner?.stop(); nativeScanner = null;
     scannerSession = null;
     barcodeRequest?.abort();
     barcodeRequest = null;
+    const restoreFocus = scannerModal.contains(document.activeElement);
     scannerModal.classList.add('hidden');
+    if (restoreFocus) btnScanBarcode.focus({ preventScroll: true });
     isProcessingScan = false;
     // A pending start must settle before stop/clear can release its camera stream.
     scannerQueue = scannerQueue.catch(error => console.error('Scanner startup failed:', error)).then(clearScanner);
@@ -723,16 +747,25 @@ async function onScanSuccess(decodedText) {
     barcodeRequest?.abort();
     barcodeRequest = request;
 
-    scannerStatus.innerHTML = `<span class="text-blue-400 font-bold animate-pulse">Found ${decodedText}... fetching nutrition!</span>`;
+    scannerStatus.textContent = 'Barcode detected. Looking up nutrition…';
 
     try {
+        decodedText = normalizeBarcode(decodedText);
+        const localFood = await searchFoodByBarcode(decodedText, store.get().foodDatabase);
+        if (request.signal.aborted || session !== scannerSession) return;
+        if (localFood) {
+            await stopScanner();
+            if (!lifetime.signal.aborted && scannerSession === null) openModal(localFood);
+            return;
+        }
+        const lookupSignal = AbortSignal.any([request.signal, AbortSignal.timeout(8000)]);
         let paddedText = decodedText.length === 12 ? '0' + decodedText : decodedText;
 
-        let response = await fetch(`https://world.openfoodfacts.org/api/v0/product/${encodeURIComponent(decodedText)}.json`, { signal: request.signal });
+        let response = await fetch(`https://world.openfoodfacts.org/api/v0/product/${encodeURIComponent(decodedText)}.json`, { signal: lookupSignal });
         let data = await response.json();
 
         if (data.status !== 1 && decodedText.length === 12) {
-            response = await fetch(`https://world.openfoodfacts.org/api/v0/product/${encodeURIComponent(paddedText)}.json`, { signal: request.signal });
+            response = await fetch(`https://world.openfoodfacts.org/api/v0/product/${encodeURIComponent(paddedText)}.json`, { signal: lookupSignal });
             data = await response.json();
         }
 
@@ -745,6 +778,7 @@ async function onScanSuccess(decodedText) {
 
         const scannedFood = {
             id: `off_${decodedText}`,
+            barcode: decodedText,
             name: product.product_name || "Unknown Product",
             category: "Scanned",
             serving: 100,
@@ -768,7 +802,7 @@ async function onScanSuccess(decodedText) {
     } catch (error) {
         if (request.signal.aborted || session !== scannerSession) return;
         console.error(error);
-        scannerStatus.innerHTML = `<span class="text-rose-400 font-bold">Item not found in global database.</span>`;
+        scannerStatus.textContent = 'No matching barcode was found locally or online. Try searching by name.';
         schedule(() => {
             if (session !== scannerSession || session.signal.aborted) return;
             isProcessingScan = false;

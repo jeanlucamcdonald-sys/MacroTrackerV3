@@ -2,6 +2,7 @@ import { initializeApp, deleteApp } from 'firebase/app';
 import { getAuth, onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, signInWithPopup, GoogleAuthProvider, signOut, connectAuthEmulator, setPersistence, browserLocalPersistence, browserSessionPersistence, inMemoryPersistence, sendPasswordResetEmail, linkWithCredential } from 'firebase/auth';
 import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager, collection, getDocsFromServer, getDocFromServer, doc, runTransaction, connectFirestoreEmulator } from 'firebase/firestore';
 import { createAuthActions } from './auth-actions.js';
+import { authDiagnostic } from './auth-diagnostics.js';
 import { documentsState } from './cloud-model.js';
 
 export async function createFirebaseAdapter(config) {
@@ -17,6 +18,7 @@ export async function createFirebaseAdapter(config) {
     // Restricted browsers can reject durable auth persistence without invalid credentials.
     try { await setPersistence(auth, browserLocalPersistence); }
     catch {
+        authDiagnostic('persistence-fallback', { detail: 'Session storage' }, 'warn');
         try { await setPersistence(auth, browserSessionPersistence); }
         catch { await setPersistence(auth, inMemoryPersistence); }
     }
@@ -25,13 +27,18 @@ export async function createFirebaseAdapter(config) {
     return {
         destroy: () => deleteApp(app),
         currentUser: () => auth.currentUser,
-        onAuth: callback => onAuthStateChanged(auth, callback),
+        onAuth: (callback, onError = () => {}) => onAuthStateChanged(auth, user => {
+            authDiagnostic('state-transition', { uid: user?.uid || null });
+            try { Promise.resolve(callback(user)).catch(error => { authDiagnostic('state-handler-failed', { uid: user?.uid || null, code: error?.code }, 'warn'); onError(error); }); }
+            catch (error) { authDiagnostic('state-handler-failed', { uid: user?.uid || null, code: error?.code }, 'warn'); onError(error); }
+        }, error => { authDiagnostic('state-listener-failed', { code: error?.code }, 'warn'); onError(error); }),
         ...createAuthActions(auth, {
             signInWithEmailAndPassword, createUserWithEmailAndPassword, signInWithPopup,
             linkWithCredential, signOut, sendPasswordResetEmail,
             credentialFromError: error => GoogleAuthProvider.credentialFromError(error)
         }, googleProvider),
         async read(uid) {
+            authDiagnostic('profile-load-started', { uid });
             const documents = new Map();
             const revisions = new Map();
             function add(path, entry) {
@@ -50,13 +57,14 @@ export async function createFirebaseAdapter(config) {
             // Older profiles may store their name on users/{uid}. Keep canonical diary
             // documents authoritative, and read only this account's optional legacy name.
             const canonical = documents.get('profile/current');
-            if (!canonical?.profile?.displayName && !canonical?.profile?.name) {
+            if (!canonical?.profile?.displayName && !canonical?.profile?.name && !canonical?.displayName && !canonical?.name) {
                 try {
                     const legacy = await getDocFromServer(doc(db, 'users', uid));
                     const data = legacy.exists() ? legacy.data() : {};
                     const profile = data.profile || data;
                     const name = [profile.displayName, profile.name].find(value => typeof value === 'string' && value.trim());
-                    if (name) documents.set('profile/current', { ...canonical, profile: { ...canonical?.profile, displayName: name.trim() } });
+                    if (!canonical && legacy.exists() && ['profile', 'displayName', 'name', 'targets', 'calorieGoal'].some(key => data[key] !== undefined)) documents.set('profile/current', data);
+                    else if (name) documents.set('profile/current', { ...canonical, profile: { ...canonical?.profile, displayName: name.trim() } });
                 } catch (error) {
                     // Previously deployed rules may not permit this optional legacy read.
                     // Core account reads above must still succeed before loading a diary.
@@ -64,7 +72,9 @@ export async function createFirebaseAdapter(config) {
                 }
             }
             try {
-                return { state: documents.size ? documentsState(documents) : null, revisions };
+                const state = documents.size ? documentsState(documents) : null;
+                authDiagnostic('profile-load-completed', { uid, detail: state ? 'Existing account restored' : 'Empty account' });
+                return { state, revisions };
             } catch (cause) {
                 const error = new Error('Sign-in succeeded, but this account contains an incompatible diary format. Its cloud records have not been overwritten.');
                 error.code = 'sync/invalid-data';

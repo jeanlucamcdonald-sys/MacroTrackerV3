@@ -31,6 +31,7 @@ export async function initializeAccount(bindClick, signal, selects, dialogs) {
     const contextTimer = setInterval(renderGreeting, 60_000);
     signal.addEventListener('abort', () => clearInterval(contextTimer), { once: true });
     document.addEventListener('visibilitychange', renderGreeting, { signal });
+    globalThis.addEventListener('profile:updated', renderGreeting, { signal });
     function report({ phase, user, error }) {
         currentPhase = phase;
         signedInUser = user || null;
@@ -49,7 +50,7 @@ export async function initializeAccount(bindClick, signal, selects, dialogs) {
             loading: 'Loading your account…', synced: 'Backed up to your account.',
             saving: 'Backing up changes…', pending: 'Cloud backup pending. Keep this device copy until backup completes.',
             conflict: 'Another device changed this data. Export your device copy before reloading the cloud copy.',
-            'load-error': 'You are signed in, but your diary could not be loaded. Retry loading your account or export an existing device backup.'
+            'load-error': user ? 'You are signed in, but your diary could not be loaded. Retry loading your account or export an existing device backup.' : 'Your sign-in state could not be restored. Sign in again or reload this page.'
         };
         status.textContent = phase === 'pending' && error?.code === 'permission-denied'
             ? 'Cloud backup is not allowed for this account. Changes remain on this device.'
@@ -65,9 +66,14 @@ export async function initializeAccount(bindClick, signal, selects, dialogs) {
         signOut.hidden = !user;
         retry.hidden = !['pending', 'load-error'].includes(phase);
         reload.hidden = phase !== 'conflict';
+        if (phase === 'load-error' && error?.code?.startsWith('auth/')) errorMessage(error);
     }
     function errorMessage(error) {
         const messages = {
+            'auth/user-token-expired': 'Your session expired. Sign out and sign in again with the original account method.',
+            'auth/invalid-user-token': 'This session could not be restored. Sign out and sign in again.',
+            'auth/invalid-id-token': 'The sign-in token could not be verified. Sign out and sign in again.',
+            'auth/requires-recent-login': 'Sign in again before changing sensitive account details.',
             'auth/invalid-credential': 'The email or password is incorrect.',
             'auth/email-already-in-use': 'An account with this email already exists. Choose Sign in.',
             'auth/weak-password': 'Use a password with at least six characters.',
@@ -179,6 +185,7 @@ export async function initializeAccount(bindClick, signal, selects, dialogs) {
                 draft.settings.goalWeight = Number(profileForm.elements.goalWeight.value) || 0;
 
             });
+            globalThis.dispatchEvent(new CustomEvent('profile:updated', { detail: store.get().profile }));
             document.getElementById('profile-feedback').textContent = 'Profile saved. Recalculate your plan to apply activity changes to calorie targets.';
         }, { signal });
         render(store.get());
@@ -202,6 +209,6 @@ export async function initializeAccount(bindClick, signal, selects, dialogs) {
         if (signal.aborted) { await adapter.destroy(); return; }
         authButtons.forEach(button => button.disabled = false);
         account.dataset.authReady = 'true';
-        sync = createCloudSync({ ...adapter, onAuth(callback) { return adapter.onAuth(user => { authPending = false; callback(user); }); } }, report);
+        sync = createCloudSync({ ...adapter, onAuth(callback, onError) { return adapter.onAuth(user => { authPending = false; callback(user); }, error => { authPending = false; onError?.(error); }); } }, report);
     } catch (error) { authPending = false; report({ phase: 'guest' }); errorMessage(error); }
 }

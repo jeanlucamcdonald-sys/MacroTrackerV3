@@ -37,3 +37,17 @@ test('sign out removes any pending provider link', async () => {
     await assert.rejects(actions.google()); await actions.signOut(); await actions.signIn('first@example.test', 'test');
     assert.equal(links, 0);
 });
+
+test('auth diagnostics inspect errors without logging passwords, credentials, or tokens', async () => {
+    const { createAuthActions } = await import('../auth-actions.js');
+    const messages = [], original = { info: console.info, warn: console.warn };
+    console.info = (...args) => messages.push(args); console.warn = (...args) => messages.push(args);
+    try {
+        const failure = Object.assign(new Error('PRIVATE_TOKEN'), { code: 'auth/invalid-credential', credential: 'PRIVATE_CREDENTIAL' });
+        const actions = createAuthActions({}, { async signInWithEmailAndPassword() { throw failure; } }, {});
+        await assert.rejects(actions.signIn('PRIVATE_EMAIL', 'PRIVATE_PASSWORD'), { code: 'auth/invalid-credential' });
+        const logged = JSON.stringify(messages);
+        assert.match(logged, /auth\/invalid-credential/);
+        for (const secret of ['PRIVATE_TOKEN', 'PRIVATE_CREDENTIAL', 'PRIVATE_EMAIL', 'PRIVATE_PASSWORD']) assert.ok(!logged.includes(secret));
+    } finally { Object.assign(console, original); }
+});

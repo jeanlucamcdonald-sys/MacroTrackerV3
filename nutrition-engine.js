@@ -60,3 +60,12 @@ export function estimateNutrition({ age, heightCm, currentWeight, weightUnit = '
     const c = (cal - p * 4 - f * 9) / 4;
     return { expenditure, bmr: Math.round(bmr), proteinPerKg, targets: { cal, p, c, f }, method: 'Mifflin–St Jeor' };
 }
+
+/** Barcode ingestion is separate from target math and loads the catalog only on demand. */
+export async function searchFoodByBarcode(code, savedFoods = []) {
+    const { findFoodByBarcode, loadCatalog } = await import('./product-catalog.js');
+    const savedMatch = findFoodByBarcode(code, savedFoods);
+    if (savedMatch) return savedMatch;
+    try { await loadCatalog(); } catch { /* Saved/offline products can still be searched. */ }
+    return findFoodByBarcode(code, savedFoods) || null;
+}

@@ -66,3 +66,14 @@ export function searchFoods(query, saved = [], limit = 12) {
     saved.forEach(food => consider(food, text(food.name), text(food.category), true));
     return [...scored.values()].sort((a, b) => b.score - a.score || a.food.name.length - b.food.name.length || a.food.name.localeCompare(b.food.name)).slice(0, limit).map(item => item.food);
 }
+
+export function normalizeBarcode(code) {
+    const value = String(code).trim();
+    if (!/^\d{8,14}$/.test(value)) throw new TypeError('Use a numeric UPC/EAN barcode with 8–14 digits.');
+    return value;
+}
+export function findFoodByBarcode(code, saved = []) {
+    const barcode = normalizeBarcode(code);
+    const normalized = barcode.replace(/^0+/, '') || '0';
+    return allFoods(saved).find(food => [food.barcode, /^off_\d+$/.test(String(food.id)) ? String(food.id).slice(4) : null, ...(Array.isArray(food.barcodes) ? food.barcodes : [])].some(value => value != null && (String(value).trim().replace(/^0+/, '') || '0') === normalized));
+}

@@ -80,3 +80,13 @@ test('weight moving average uses available readings within seven calendar days w
     const before = structuredClone(entries), averages = movingAverageWeights(entries, 'kg');
     assert.equal(averages.length, 3); assert.ok(Math.abs(averages[1].value - 81) < 1e-8); assert.equal(averages[2].value, 79); assert.deepEqual(entries, before);
 });
+
+test('rolling average and week-over-week change normalize units and distinguish old-reading fallback', async () => {
+    const { rollingWeightMetrics } = await import('../history-model.js');
+    const entries = [{ timestamp: '2026-10-01T12:00:00Z', value: 80, unit: 'kg' }, { timestamp: '2026-10-08T12:00:00Z', value: 79 / .45359237, unit: 'lb' }, { timestamp: '2026-10-10T12:00:00Z', value: 77, unit: 'kg' }];
+    const result = rollingWeightMetrics(entries, 'kg', '2026-10-10');
+    assert.ok(Math.abs(result.average - 78) < 1e-8); assert.ok(Math.abs(result.weeklyDelta + 2) < 1e-8); assert.equal(result.fallback, false);
+    assert.equal(rollingWeightMetrics(entries, 'kg', '2026-10-25').average, 77);
+    assert.equal(rollingWeightMetrics(entries, 'kg', '2026-10-25').fallback, true);
+    assert.equal(rollingWeightMetrics([], 'kg', '2026-10-10').average, null);
+});

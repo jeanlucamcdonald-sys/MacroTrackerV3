@@ -9,7 +9,7 @@ async function searchOpenFoodFacts(query, signal) {
     if (!response.ok) throw new Error(`Product lookup returned ${response.status}`);
     const data = await response.json();
     return (data.products || []).filter(product => product.product_name && ['energy-kcal_100g', 'proteins_100g', 'carbohydrates_100g', 'fat_100g'].every(key => finite(product.nutriments?.[key]))).map(product => ({
-        id: `off_${product.code}`, name: `${product.product_name}${product.brands ? ' — ' + product.brands : ''}`,
+        id: `off_${product.code}`, barcode: String(product.code), name: `${product.product_name}${product.brands ? ' — ' + product.brands : ''}`,
         category: 'Branded product', serving: 100, unit: 'g', cal: Number(product.nutriments['energy-kcal_100g']),
         p: Number(product.nutriments.proteins_100g), c: Number(product.nutriments.carbohydrates_100g), f: Number(product.nutriments.fat_100g)
     }));

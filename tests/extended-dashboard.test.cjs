@@ -190,3 +190,122 @@ test('calendar, timeline and summary share protein-based compliance and update o
         assert.match(await page.locator('#daily-log-container').textContent(), /2175 \/ 2000 kcal/);
     });
 });
+
+test('legacy flat and partial profiles merge defaults while preserving diary documents', async () => {
+    await withPage(async page => {
+        const result = await page.evaluate(async () => {
+            const { documentsState } = await import('/cloud-model.js');
+            const totals = { cal: 100, p: 10, c: 5, f: 2 };
+            const docs = new Map([['profile/current', { displayName: 'Legacy Primary', currentWeight: '80', calorieGoal: 2100, proteinGoal: 160, goalType: 'cut' }], ['logs/2026-10-05', { date: '2026-10-05', totals, diary: [{ id: 'keep', name: 'Keep diary', timestamp: '12:00', ...totals }] }]]);
+            const flat = documentsState(docs);
+            docs.set('profile/current', { profile: { displayName: 'Partial profile' }, targets: { cal: 2200 }, settings: { onboardingComplete: true } });
+            const partial = documentsState(docs);
+            return { name: flat.profile.displayName, goal: flat.profile.goal, calories: flat.targets.cal, preserved: flat.logs['2026-10']['2026-10-05'].diary[0].id, currentWeight: flat.profile.currentWeight, partial: partial.targets, complete: partial.settings.onboardingComplete };
+        });
+        assert.equal(result.name, 'Legacy Primary'); assert.equal(result.goal, 'lose'); assert.equal(result.calories, 2100); assert.equal(result.preserved, 'keep'); assert.equal(result.currentWeight, 80);
+        assert.equal(result.complete, true); assert.equal(result.partial.cal, 2200); assert.ok(Math.abs(result.partial.cal - (4 * result.partial.p + 4 * result.partial.c + 9 * result.partial.f)) < 1e-5);
+    });
+});
+test('saving profile emits profile:updated and updates the greeting immediately', async () => {
+    await withPage(async page => {
+        await page.evaluate(() => addEventListener('profile:updated', event => window.lastUpdatedName = event.detail.displayName));
+        await click(page, '#btn-account'); await click(page, '[data-dialog-tab=profile]');
+        await page.locator('#profile-form input[name=displayName]').fill('Instant preferred name'); await page.locator('#profile-form').dispatchEvent('submit');
+        assert.equal(await page.evaluate(() => window.lastUpdatedName), 'Instant preferred name');
+        assert.ok((await page.locator('#dashboard-greeting').textContent()).endsWith(', Instant preferred name'));
+    });
+});
+test('portable JSON profile/weights/meals backup restores a deleted diary entry', async () => {
+    await withPage(async page => {
+        const result = await page.evaluate(async () => {
+            const { store, backupDocument, parseBackup, applyBackup } = await import('/state.js');
+            const totals = { cal: 100, p: 10, c: 5, f: 2 };
+            store.update(state => { state.logs['2026-10'] = { '2026-10-05': { date: '2026-10-05', totals, diary: [{ id: 'restore', name: 'Restore meal', timestamp: '12:00', ...totals }] } }; state.weightLog = [{ id: 'w', timestamp: '2026-10-05T12:00:00Z', value: 80, unit: 'kg' }]; });
+            const full = backupDocument();
+            const portable = { version: full.version, exportedAt: full.exportedAt, profile: full.profile, targets: full.targets, weights: full.weights, meals: full.meals };
+            store.update(state => { state.logs = {}; state.weightLog = []; });
+            applyBackup(parseBackup(JSON.stringify(portable)));
+            return { entry: store.get().logs['2026-10']['2026-10-05'].diary[0].id, weight: store.get().weightLog[0].value };
+        });
+        assert.deepEqual(result, { entry: 'restore', weight: 80 });
+    });
+});
+test('barcode lookup finds saved UPC/EAN aliases offline without inventing codes for reference foods', async () => {
+    await withPage(async page => {
+        const result = await page.evaluate(async () => {
+            const { searchFoodByBarcode } = await import('/nutrition-engine.js');
+            const { allFoods } = await import('/product-catalog.js');
+            const food = { id: 'off_123456789012', barcode: '123456789012', name: 'Saved scanned product', serving: 100, unit: 'g', cal: 100, p: 10, c: 5, f: 2 };
+            const found = await searchFoodByBarcode('0123456789012', [food]);
+            const legacy = await searchFoodByBarcode('123456789012', [{ ...food, barcode: undefined }]);
+            return { found: found.id, legacy: legacy.id, datasetHasBarcodes: allFoods().some(item => !!item.barcode) };
+        });
+        assert.equal(result.found, 'off_123456789012'); assert.equal(result.legacy, result.found); assert.equal(result.datasetHasBarcodes, false);
+    });
+});
+test('auth listener failure leaves a retryable error instead of indefinite loading', async () => {
+    await withPage(async page => {
+        const phases = await page.evaluate(async () => {
+            const { createCloudSync } = await import('/cloud-sync.js'); let fail; const phases = [];
+            const sync = createCloudSync({ onAuth(callback, onError) { fail = onError; return () => {}; }, currentUser: () => ({ uid: 'test-user' }) }, event => phases.push(event.phase));
+            fail({ code: 'auth/network-request-failed' }); sync.destroy(); return phases;
+        });
+        assert.deepEqual(phases, ['load-error']);
+    });
+});
+
+test('native camera detection opens a saved barcode food offline and stops its stream', async () => {
+    await withPage(async page => {
+        await page.evaluate(async () => {
+            const { store } = await import('/state.js');
+            store.update(state => { state.foodDatabase.push({ id: 'barcode-native', barcode: '0123456789012', name: 'Native saved food', serving: 100, unit: 'g', cal: 120, p: 10, c: 10, f: 4 }); });
+            await import('/native-scanner.js');
+            window.BarcodeDetector = class {
+                static async getSupportedFormats() { return ['ean_13']; }
+                async detect() { return [{ rawValue: '0123456789012' }]; }
+            };
+            const canvas = document.createElement('canvas'); canvas.width = canvas.height = 1;
+            const stream = canvas.captureStream(); window.stoppedTracks = 0;
+            for (const track of stream.getTracks()) { const stop = track.stop.bind(track); track.stop = () => { window.stoppedTracks++; stop(); }; }
+            Object.defineProperty(navigator, 'mediaDevices', { configurable: true, value: { getUserMedia: async () => stream } });
+            HTMLMediaElement.prototype.play = async () => {};
+        });
+        await page.context().setOffline(true); await click(page, '#btn-scan-barcode');
+        await page.waitForFunction(() => document.querySelector('#modal-food-name').textContent === 'Native saved food');
+        assert.equal(await page.evaluate(() => window.stoppedTracks), 1);
+        assert.equal(await page.locator('#scanner-modal').isVisible(), false);
+    });
+});
+test('a stalled profile read times out while retaining the authenticated identity', async () => {
+    await withPage(async page => {
+        await page.clock.install();
+        await page.evaluate(async () => {
+            const { createCloudSync } = await import('/cloud-sync.js');
+            window.hydrationPhases = [];
+            window.hydrationSync = createCloudSync({ currentUser: () => ({ uid: 'timeout-user' }), onAuth(callback) { callback({ uid: 'timeout-user' }); return () => {}; }, read: () => { window.hydrationReadRequested = true; return new Promise(() => {}); } }, event => window.hydrationPhases.push({ phase: event.phase, uid: event.user?.uid, code: event.error?.code }));
+        });
+        await page.waitForFunction(() => window.hydrationReadRequested);
+        await page.clock.runFor(15100);
+        const phases = await page.evaluate(() => { window.hydrationSync.destroy(); return window.hydrationPhases; });
+        assert.equal(phases.at(-1).phase, 'load-error'); assert.equal(phases.at(-1).uid, 'timeout-user'); assert.equal(phases.at(-1).code, 'deadline-exceeded');
+    });
+});
+
+test('fallback scanner decodes a real EAN-13 fixture and finds the matching saved product', async () => {
+    const encoded = require('node:fs').readFileSync('tests/fixtures/ean13-4006381333931.png').toString('base64');
+    await withPage(async page => {
+        const result = await page.evaluate(async encoded => {
+            const { Html5Qrcode, Html5QrcodeSupportedFormats } = await import('/dist/scanner.js');
+            const { searchFoodByBarcode } = await import('/nutrition-engine.js');
+            const holder = document.createElement('div'); holder.id = 'fixture-reader'; document.body.append(holder);
+            const scanner = new Html5Qrcode(holder.id, { formatsToSupport: [Html5QrcodeSupportedFormats.EAN_13] });
+            try {
+                const bytes = Uint8Array.from(atob(encoded), char => char.charCodeAt(0));
+                const code = await scanner.scanFile(new File([bytes], 'ean13.png', { type: 'image/png' }), false);
+                const food = await searchFoodByBarcode(code, [{ id: 'fixture-product', barcode: '4006381333931', name: 'Barcode fixture product' }]);
+                return { code, id: food.id };
+            } finally { scanner.clear(); holder.remove(); }
+        }, encoded);
+        assert.deepEqual(result, { code: '4006381333931', id: 'fixture-product' });
+    });
+});

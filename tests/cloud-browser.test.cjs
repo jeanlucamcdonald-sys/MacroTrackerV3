@@ -251,3 +251,26 @@ test('onboarding weight, profile name and dashboard edits restore across fresh a
         await context.close();
     } finally { await browser.close(); }
 });
+
+test('returning legacy primary-shaped account restores through repeated authenticated reloads without losing diary', { skip: !process.env.MACROTRACKER_EMULATORS }, async () => {
+    const browser = await chromium.launch({ executablePath: '/usr/bin/chromium', headless: true, args: ['--no-sandbox'] });
+    const { initializeTestEnvironment } = require('@firebase/rules-unit-testing');
+    const { doc, setDoc } = require('firebase/firestore');
+    const environment = await initializeTestEnvironment({ projectId: 'demo-macrotracker', firestore: { host: '127.0.0.1', port: 8080 } });
+    try {
+        const { page, context } = await pageFor(browser); const errors = []; page.on('pageerror', error => errors.push(error.message));
+        const email = `legacy-primary-${Date.now()}@example.test`; await signIn(page, email, true); await logChicken(page);
+        const uid = await page.evaluate(async () => (await import('/persistence.js')).deviceCache.scope);
+        await environment.withSecurityRulesDisabled(async admin => {
+            await setDoc(doc(admin.firestore(), `users/${uid}/profile/current`), { displayName: 'Preferred legacy primary', goalType: 'cut', targets: { cal: 2200 }, _revision: 2 });
+        });
+        for (let i = 0; i < 3; i++) {
+            await page.reload(); await page.waitForFunction(() => document.querySelector('#cloud-status').textContent === 'Backed up to your account.');
+            assert.equal(await page.evaluate(async () => (await import('/persistence.js')).deviceCache.scope), uid);
+            assert.equal(await page.locator('#auth-form').evaluate(el => el.hidden), true);
+            assert.equal(await page.locator('[data-value=total-cal]').textContent(), '120');
+            assert.ok((await page.locator('#dashboard-greeting').textContent()).endsWith(', Preferred legacy primary'));
+        }
+        assert.deepEqual(errors, []); await context.close();
+    } finally { await environment.cleanup(); await browser.close(); }
+});

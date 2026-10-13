@@ -70,3 +70,15 @@ export function setLatestWeight(state) {
     const latest = [...state.weightLog].sort((a, b) => a.timestamp.localeCompare(b.timestamp)).at(-1);
     state.profile.currentWeight = latest ? weightIn(latest, state.profile.weightUnit || 'kg') : null;
 }
+
+export function rollingWeightMetrics(entries, unit, anchor) {
+    const eligible = entries.filter(entry => localDateString(new Date(entry.timestamp)) <= anchor).sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+    if (!eligible.length) return { average: null, weeklyDelta: null, fallback: false };
+    const recent = eligible.filter(entry => localDateString(new Date(entry.timestamp)) >= addDays(anchor, -6));
+    const previous = eligible.filter(entry => {
+        const date = localDateString(new Date(entry.timestamp));
+        return date >= addDays(anchor, -13) && date <= addDays(anchor, -7);
+    });
+    const mean = rows => rows.reduce((sum, entry) => sum + weightIn(entry, unit), 0) / rows.length;
+    return { average: recent.length ? mean(recent) : weightIn(eligible.at(-1), unit), weeklyDelta: recent.length && previous.length ? mean(recent) - mean(previous) : null, fallback: !recent.length };
+}

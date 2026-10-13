@@ -1,11 +1,11 @@
 import { store } from './state.js';
 import { localDateString } from './local-date.js';
-import { parseDate, weightIn, weightSummary, setLatestWeight, movingAverageWeights } from './history-model.js';
+import { parseDate, weightIn, weightSummary, setLatestWeight, movingAverageWeights, rollingWeightMetrics } from './history-model.js';
 const fmt = value => Number(value.toFixed(2)).toLocaleString();
 const delta = value => value === null ? 'Need an earlier reading' : `${value > 0 ? '+' : ''}${fmt(value)}`;
 export function initializeWeights(bindClick, signal, selection = () => ({ anchor: localDateString(), period: 'day' })) {
     const root = document.getElementById('weight-dashboard');
-    root.innerHTML = `<h3 class="text-xl font-semibold">Weight & momentum</h3><p id="weight-latest" class="weight-value"></p><div class="weight-metrics"><p><span id="weight-weekly"></span><small>Change over 7 days</small></p><p><span id="weight-starting"></span><small>Since first reading</small></p><p><span id="weight-period"></span><small>Selected-period change</small></p></div><div id="weight-trend"></div><form id="quick-weight-form" class="quick-weight-form"><input name="id" type="hidden"><label>Date<input name="date" type="date" required></label><label>Weight <span data-weight-unit></span><input name="value" type="number" min="0.1" max="1999" step="any" required></label><button type="submit" class="primary-button">Log weight</button><button id="btn-weight-cancel" type="button" class="select-trigger" hidden>Cancel edit</button></form><p class="muted">Logging again replaces that day’s reading. Trend shows the last 30 days through the selected date.</p><p id="weight-feedback" role="status"></p><button id="btn-weight-history" type="button" class="select-trigger mt-3">View & edit weight history</button>`;
+    root.innerHTML = `<h3 class="text-xl font-semibold">Weight & momentum</h3><p id="weight-latest" class="weight-value"></p><div class="weight-metrics"><p><span id="weight-weekly"></span><small>Change over 7 days</small></p><p><span id="weight-starting"></span><small>Since first reading</small></p><p><span id="weight-period"></span><small>Selected-period change</small></p></div><p id="weight-average" class="muted"></p><p id="weight-average-delta" class="muted"></p><div id="weight-trend"></div><form id="quick-weight-form" class="quick-weight-form"><input name="id" type="hidden"><label>Date<input name="date" type="date" required></label><label>Weight <span data-weight-unit></span><input name="value" type="number" min="0.1" max="1999" step="any" required></label><button type="submit" class="primary-button">Log weight</button><button id="btn-weight-cancel" type="button" class="select-trigger" hidden>Cancel edit</button></form><p class="muted">Logging again replaces that day’s reading. Trend shows the last 30 days through the selected date.</p><p id="weight-feedback" role="status"></p><button id="btn-weight-history" type="button" class="select-trigger mt-3">View & edit weight history</button>`;
     bindClick(document.getElementById('btn-weight-history'), () => globalThis.dispatchEvent(new CustomEvent('navigate-weight')));
     const quick = document.getElementById('quick-weight-form');
     const forms = [quick, document.getElementById('weight-form')];
@@ -44,6 +44,9 @@ export function initializeWeights(bindClick, signal, selection = () => ({ anchor
         if (nextKey === key) return; key = nextKey;
         const unit = state.profile.weightUnit || 'kg';
         const summary = weightSummary(state.weightLog, unit, anchor, period);
+        const rolling = rollingWeightMetrics(state.weightLog, unit, anchor);
+        document.getElementById('weight-average').textContent = rolling.average === null ? 'No rolling average yet' : `${rolling.fallback ? 'Latest reading (no measurements in the last 7 days)' : '7-day average'}: ${rolling.average.toFixed(1)} ${unit}`;
+        document.getElementById('weight-average-delta').textContent = rolling.weeklyDelta === null ? 'Week-over-week average change: need readings in both weeks' : `Week-over-week average change: ${delta(rolling.weeklyDelta)} ${unit}`;
         root.querySelector('[data-weight-unit]').textContent = `(${unit})`;
         document.getElementById('weight-latest').textContent = summary.latest ? `${fmt(summary.value)} ${unit} · ${localDateString(new Date(summary.latest.timestamp))}` : 'No weight recorded yet';
         for (const [id, value] of [['weight-weekly', summary.weeklyChange], ['weight-starting', summary.startingChange], ['weight-period', summary.periodChange]]) document.getElementById(id).textContent = `${delta(value)}${value === null ? '' : ` ${unit}`}`;
